@@ -36,3 +36,28 @@ export function sendTab<T extends Msg['type']>(
 ): Promise<MsgResult[T]> {
   return chrome.tabs.sendMessage(tabId, msg)
 }
+
+export function contentScriptFiles(): string[] {
+  const files = chrome.runtime.getManifest().content_scripts?.[0]?.js
+  if (!files?.length) throw new Error('No content script in the manifest.')
+  return files
+}
+
+export async function injectContent(tabId: number): Promise<void> {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: contentScriptFiles(),
+  })
+}
+
+export async function sendTabOrInject<T extends Msg['type']>(
+  tabId: number,
+  msg: Extract<Msg, { type: T }>,
+): Promise<MsgResult[T]> {
+  try {
+    return await chrome.tabs.sendMessage(tabId, msg)
+  } catch {
+    await injectContent(tabId)
+    return chrome.tabs.sendMessage(tabId, msg)
+  }
+}

@@ -164,7 +164,7 @@ export const EMPTY_IDENTITY: Identity = {
 
 export const EMPTY_SETTINGS: Settings = {
   openrouterKey: '',
-  openrouterModel: 'openai/gpt-4o-mini',
+  openrouterModel: 'deepseek/deepseek-v4-flash-0731',
   fillUnmatchedWithAI: true,
 }
 
@@ -180,10 +180,15 @@ export const EMPTY_STORE: Store = {
 }
 
 export const OPENROUTER_MODELS = [
-  'openai/gpt-4o-mini',
-  'openai/gpt-4o',
-  'anthropic/claude-sonnet-4',
-  'anthropic/claude-3.5-sonnet',
-  'google/gemini-2.0-flash-001',
-  'meta-llama/llama-3.3-70b-instruct',
+  'deepseek/deepseek-v4-flash-0731',
+  'z-ai/glm-5.3-flash',
+  'openai/gpt-5.6-luna',
 ] as const
+
+export type OpenRouterPreset = (typeof OPENROUTER_MODELS)[number]
+
+export const CUSTOM_MODEL = '__custom__'
+
+export function isPresetModel(id: string): id is OpenRouterPreset {
+  return (OPENROUTER_MODELS as readonly string[]).includes(id)
+}

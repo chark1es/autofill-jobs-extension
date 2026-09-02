@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'preact/hooks'
 import type { DetectedField, DetectResult, Experience, Education, MatchStatus, Store } from '../lib/types'
 import { EMPTY_IDENTITY, EMPTY_STORE } from '../lib/types'
 import { fromExportBundle, loadStore, saveStore, subscribeStore, toExportBundle, uid } from '../lib/storage'
+import { sendTabOrInject } from '../lib/messages'
 import { findSavedAnswer, heuristicValue, needsAI } from '../lib/match'
-import { completeWithOpenRouter } from '../lib/openrouter'
-import { OPENROUTER_MODELS } from '../lib/types'
+import { completeWithOpenRouter, fetchModelPricing, formatModelCost, formatUsdShort, type ModelPricing } from '../lib/openrouter'
+import { CUSTOM_MODEL, isPresetModel, OPENROUTER_MODELS } from '../lib/types'
 import { Icon } from './icons'
 
 type Tab = 'fill' | 'profile' | 'experience' | 'resume' | 'settings'
@@ -23,12 +24,7 @@ async function currentTab(): Promise<chrome.tabs.Tab | null> {
 
 async function ensureDetect(tabId: number): Promise<DetectResult> {
   if (!chrome.tabs?.sendMessage) throw new Error('Not running as an extension.')
-  try {
-    return await chrome.tabs.sendMessage(tabId, { type: 'DETECT' })
-  } catch {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content/index.ts'] })
-    return chrome.tabs.sendMessage(tabId, { type: 'DETECT' })
-  }
+  return sendTabOrInject(tabId, { type: 'DETECT' })
 }
 
 export function App({ mode }: { mode: 'popup' | 'options' }) {
@@ -147,7 +143,7 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
       const resume = store.resume
         ? { name: store.resume.name, mime: store.resume.mime, dataBase64: store.resume.dataBase64 }
         : undefined
-      await chrome.tabs.sendMessage(t.id, { type: 'FILL', payload: { items, resume } })
+      await sendTabOrInject(t.id, { type: 'FILL', payload: { items, resume } })
       setNotice(`Wrote ${items.length} fields.`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Fill failed.')
@@ -162,13 +158,7 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
     try {
       const t = await currentTab()
       if (!t?.id) throw new Error('No active tab.')
-      let data: Partial<Store>
-      try {
-        data = await chrome.tabs.sendMessage(t.id, { type: 'IMPORT_LINKEDIN' })
-      } catch {
-        await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ['src/content/index.ts'] })
-        data = await chrome.tabs.sendMessage(t.id, { type: 'IMPORT_LINKEDIN' })
-      }
+      const data: Partial<Store> = await sendTabOrInject(t.id, { type: 'IMPORT_LINKEDIN' })
       const next: Store = {
         ...store,
         identity: { ...store.identity, ...data.identity },
@@ -693,6 +683,36 @@ function SettingsTab({
   onLinkedIn: () => void
 }) {
   const s = store.settings
+  const custom = !isPresetModel(s.openrouterModel)
+  const [prices, setPrices] = useState<Record<string, ModelPricing | null>>({})
+  const [priceStatus, setPriceStatus] = useState<'idle' | 'loading' | 'missing'>('idle')
+
+  useEffect(() => {
+    const ids = [...OPENROUTER_MODELS, custom ? s.openrouterModel : ''].filter(Boolean)
+    let cancelled = false
+    const run = () => {
+      setPriceStatus('loading')
+      void Promise.all(ids.map((id) => fetchModelPricing(id).then((p) => [id, p] as const))).then(
+        (entries) => {
+          if (cancelled) return
+          const next: Record<string, ModelPricing | null> = {}
+          for (const [id, p] of entries) next[id] = p
+          setPrices((prev) => ({ ...prev, ...next }))
+          const active = s.openrouterModel.trim()
+          if (!active) setPriceStatus('idle')
+          else setPriceStatus(next[active] ? 'idle' : 'missing')
+        },
+      )
+    }
+    const handle = window.setTimeout(run, custom ? 400 : 0)
+    return () => {
+      cancelled = true
+      window.clearTimeout(handle)
+    }
+  }, [s.openrouterModel, custom])
+
+  const activePrice = prices[s.openrouterModel.trim()] ?? null
+
   function exportFile() {
     const blob = new Blob([JSON.stringify(toExportBundle(store), null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -733,21 +753,55 @@ function SettingsTab({
         <label class="field span-2">
           <span>Model</span>
           <select
-            value={s.openrouterModel}
-            onChange={(e) =>
+            value={custom ? CUSTOM_MODEL : s.openrouterModel}
+            onChange={(e) => {
+              const v = (e.target as HTMLSelectElement).value
               void persist({
                 ...store,
-                settings: { ...s, openrouterModel: (e.target as HTMLSelectElement).value },
+                settings: {
+                  ...s,
+                  openrouterModel: v === CUSTOM_MODEL ? (custom ? s.openrouterModel : '') : v,
+                },
               })
-            }
+            }}
           >
             {OPENROUTER_MODELS.map((m) => (
               <option key={m} value={m}>
                 {m}
+                {prices[m] ? ` · ${formatUsdShort(prices[m]!)}` : ''}
               </option>
             ))}
+            <option value={CUSTOM_MODEL}>Custom</option>
           </select>
         </label>
+        {custom ? (
+          <label class="field span-2">
+            <span>OpenRouter slug</span>
+            <input
+              type="text"
+              value={s.openrouterModel}
+              placeholder="provider/model-id"
+              spellcheck={false}
+              onInput={(e) =>
+                void persist({
+                  ...store,
+                  settings: { ...s, openrouterModel: (e.target as HTMLInputElement).value.trim() },
+                })
+              }
+            />
+          </label>
+        ) : null}
+        <p class="price">
+          {priceStatus === 'loading'
+            ? 'Fetching price…'
+            : activePrice
+              ? formatModelCost(activePrice)
+              : s.openrouterModel.trim()
+                ? priceStatus === 'missing'
+                  ? 'No OpenRouter price for this slug.'
+                  : ''
+                : 'Enter a model slug to see price.'}
+        </p>
         <label class="check span-2">
           <input
             type="checkbox"

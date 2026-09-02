@@ -5,7 +5,7 @@ import {
   heuristicValue,
   needsAI,
 } from '../lib/match'
-import type { Msg } from '../lib/messages'
+import { sendTabOrInject, type Msg } from '../lib/messages'
 import type { DetectResult, FillPlanItem, FillRequest, FillResult, Store } from '../lib/types'
 
 async function activeTab(): Promise<chrome.tabs.Tab> {
@@ -15,15 +15,7 @@ async function activeTab(): Promise<chrome.tabs.Tab> {
 }
 
 async function tabMsg<T>(tabId: number, msg: Msg): Promise<T> {
-  try {
-    return await chrome.tabs.sendMessage(tabId, msg)
-  } catch {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['src/content/index.ts'],
-    })
-    return chrome.tabs.sendMessage(tabId, msg)
-  }
+  return sendTabOrInject(tabId, msg) as Promise<T>
 }
 
 async function planFill(store: Store, detect: DetectResult): Promise<FillPlanItem[]> {

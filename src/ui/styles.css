@@ -367,6 +367,10 @@ textarea { min-height: 72px; resize: vertical; }
   font-weight: 600;
 }
 
-.status {
+.price {
+  grid-column: 1 / -1;
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }

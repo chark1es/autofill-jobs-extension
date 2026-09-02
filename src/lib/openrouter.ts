@@ -88,3 +88,65 @@ export async function structureResumeWithAI(opts: {
   const trimmed = raw.replace(/^```json\s*|\s*```$/g, '')
   return JSON.parse(trimmed)
 }
+
+export interface ModelPricing {
+  id: string
+  name: string
+  prompt: string
+  completion: string
+}
+
+const pricingCache = new Map<string, ModelPricing | null>()
+
+function perMillion(perToken: string): number {
+  return Number(perToken) * 1e6
+}
+
+export function formatUsdPerM(perToken: string): string {
+  const n = perMillion(perToken)
+  if (!Number.isFinite(n)) return '—'
+  if (n === 0) return 'free'
+  if (n >= 1) return `$${n.toFixed(2)}`
+  return `$${n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}`
+}
+
+export function formatModelCost(p: ModelPricing): string {
+  return `${formatUsdPerM(p.prompt)} in · ${formatUsdPerM(p.completion)} out / 1M tok`
+}
+
+export function formatUsdShort(p: ModelPricing): string {
+  return `${formatUsdPerM(p.prompt)}/${formatUsdPerM(p.completion)}`
+}
+
+export async function fetchModelPricing(id: string): Promise<ModelPricing | null> {
+  const key = id.trim()
+  if (!key) return null
+  if (pricingCache.has(key)) return pricingCache.get(key) ?? null
+  const res = await fetch(
+    `https://openrouter.ai/api/v1/models?q=${encodeURIComponent(key)}`,
+  )
+  if (!res.ok) {
+    pricingCache.set(key, null)
+    return null
+  }
+  const json = (await res.json()) as {
+    data?: Array<{
+      id: string
+      name?: string
+      pricing?: { prompt?: string; completion?: string }
+    }>
+  }
+  const models = json.data ?? []
+  const hit = models.find((m) => m.id === key)
+  const pricing =
+    hit?.pricing?.prompt != null && hit.pricing.completion != null
+      ? {
+          id: hit.id,
+          name: hit.name ?? hit.id,
+          prompt: hit.pricing.prompt,
+          completion: hit.pricing.completion,
+        }
+      : null
+  if (pricing) pricingCache.set(key, pricing)
+  return pricing
+}
