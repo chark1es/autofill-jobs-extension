@@ -17,7 +17,7 @@ chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
         return
       }
       if (msg.type === 'IMPORT_LINKEDIN') {
-        sendResponse(importLinkedIn())
+        sendResponse(await importLinkedIn())
         return
       }
     } catch (err) {

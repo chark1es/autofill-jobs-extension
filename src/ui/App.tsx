@@ -22,6 +22,24 @@ async function currentTab(): Promise<chrome.tabs.Tab | null> {
   return tab ?? null
 }
 
+async function linkedInProfileTab(): Promise<chrome.tabs.Tab | null> {
+  if (typeof chrome === 'undefined' || !chrome.tabs?.query) return null
+  const current = await currentTab()
+  if (current?.url && /^https:\/\/([^.]+\.)?linkedin\.com\/in\/[^/]+/i.test(current.url)) {
+    return current
+  }
+  const tabs = await chrome.tabs.query({})
+  const profiles = tabs.filter(
+    (candidate) => candidate.id && candidate.url && /^https:\/\/([^.]+\.)?linkedin\.com\/in\/[^/]+/i.test(candidate.url),
+  )
+  profiles.sort((a, b) => {
+    if (a.windowId === current?.windowId && b.windowId !== current?.windowId) return -1
+    if (b.windowId === current?.windowId && a.windowId !== current?.windowId) return 1
+    return (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0)
+  })
+  return profiles[0] ?? null
+}
+
 async function ensureDetect(tabId: number): Promise<DetectResult> {
   if (!chrome.tabs?.sendMessage) throw new Error('Not running as an extension.')
   return sendTabOrInject(tabId, { type: 'DETECT' })
@@ -156,9 +174,10 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
     setError('')
     setBusy('Importing')
     try {
-      const t = await currentTab()
-      if (!t?.id) throw new Error('No active tab.')
-      const data: Partial<Store> = await sendTabOrInject(t.id, { type: 'IMPORT_LINKEDIN' })
+      const t = await linkedInProfileTab()
+      if (!t?.id) throw new Error('Open your LinkedIn profile in a tab, then try again.')
+      const data = await sendTabOrInject(t.id, { type: 'IMPORT_LINKEDIN' }) as Partial<Store> & { error?: string }
+      if (data.error) throw new Error(data.error)
       const next: Store = {
         ...store,
         identity: { ...store.identity, ...data.identity },
@@ -167,7 +186,12 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
         skills: data.skills?.length ? data.skills : store.skills,
       }
       await persist(next)
-      setNotice('LinkedIn fields merged into the candidate file.')
+      const counts = [
+        data.experience?.length ? `${data.experience.length} roles` : '',
+        data.education?.length ? `${data.education.length} schools` : '',
+        data.skills?.length ? `${data.skills.length} skills` : '',
+      ].filter(Boolean)
+      setNotice(`LinkedIn profile imported${counts.length ? `: ${counts.join(', ')}` : ''}.`)
       setTab('profile')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'LinkedIn import failed. Open your profile tab.')
@@ -363,19 +387,26 @@ function ProfileTab({
     <>
       <div class="form-grid">
         <Field label="First name" value={id.firstName} onInput={(v) => set('firstName', v)} />
+        <Field label="Middle name" value={id.middleName} onInput={(v) => set('middleName', v)} />
         <Field label="Last name" value={id.lastName} onInput={(v) => set('lastName', v)} />
+        <Field label="Name suffix" value={id.nameSuffix} onInput={(v) => set('nameSuffix', v)} />
         <Field label="Preferred name" value={id.preferredName} onInput={(v) => set('preferredName', v)} />
         <Field label="Pronouns" value={id.pronouns} onInput={(v) => set('pronouns', v)} />
         <Field label="Email" value={id.email} type="email" onInput={(v) => set('email', v)} />
         <Field label="Phone" value={id.phone} type="tel" onInput={(v) => set('phone', v)} />
-        <Field label="Address" value={id.address1} span onInput={(v) => set('address1', v)} />
+        <Field label="Alternate phone" value={id.phoneAlt} type="tel" span onInput={(v) => set('phoneAlt', v)} />
+        <Field label="Address line 1" value={id.address1} span onInput={(v) => set('address1', v)} />
+        <Field label="Address line 2" value={id.address2} span onInput={(v) => set('address2', v)} />
         <Field label="City" value={id.city} onInput={(v) => set('city', v)} />
         <Field label="State" value={id.state} onInput={(v) => set('state', v)} />
         <Field label="Postal code" value={id.postalCode} onInput={(v) => set('postalCode', v)} />
         <Field label="Country" value={id.country} onInput={(v) => set('country', v)} />
         <Field label="LinkedIn" value={id.linkedin} type="url" span onInput={(v) => set('linkedin', v)} />
         <Field label="GitHub" value={id.github} type="url" onInput={(v) => set('github', v)} />
+        <Field label="Portfolio" value={id.portfolio} type="url" onInput={(v) => set('portfolio', v)} />
         <Field label="Website" value={id.website} type="url" onInput={(v) => set('website', v)} />
+        <Field label="Desired job title" value={id.desiredJobTitle} onInput={(v) => set('desiredJobTitle', v)} />
+        <Field label="Years of experience" value={id.yearsExperience} onInput={(v) => set('yearsExperience', v)} />
         <Field label="Headline" value={id.headline} span onInput={(v) => set('headline', v)} />
         <Field label="Summary" value={id.summary} type="textarea" span onInput={(v) => set('summary', v)} />
         <label class="field">
@@ -394,8 +425,32 @@ function ProfileTab({
             <option value="no">No</option>
           </select>
         </label>
+        <label class="field">
+          <span>Willing to relocate</span>
+          <select value={id.willingToRelocate} onChange={(e) => set('willingToRelocate', (e.target as HTMLSelectElement).value)}>
+            <option value="">—</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Willing to travel</span>
+          <select value={id.willingToTravel} onChange={(e) => set('willingToTravel', (e.target as HTMLSelectElement).value)}>
+            <option value="">—</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+        <Field label="Citizenship" value={id.citizenship} onInput={(v) => set('citizenship', v)} />
+        <Field label="Visa status" value={id.visaStatus} onInput={(v) => set('visaStatus', v)} />
+        <Field label="Employment type" value={id.employmentType} onInput={(v) => set('employmentType', v)} />
+        <Field label="Work setting" value={id.remotePreference} onInput={(v) => set('remotePreference', v)} />
         <Field label="Salary expectation" value={id.salaryExpectation} onInput={(v) => set('salaryExpectation', v)} />
         <Field label="Notice / start" value={id.noticePeriod} onInput={(v) => set('noticePeriod', v)} />
+        <Field label="Gender" value={id.gender} onInput={(v) => set('gender', v)} />
+        <Field label="Race / ethnicity" value={id.ethnicity} onInput={(v) => set('ethnicity', v)} />
+        <Field label="Veteran status" value={id.veteranStatus} onInput={(v) => set('veteranStatus', v)} />
+        <Field label="Disability status" value={id.disabilityStatus} onInput={(v) => set('disabilityStatus', v)} />
       </div>
       <div class="toolbar" />
       <label class="field span-2">

@@ -8,11 +8,13 @@ type Vocab = {
 
 const VOCAB: Vocab[] = [
   { key: 'firstName', kind: 'text', tests: [/\b(first|given|forename)\s*name\b/i, /\bgiven-name\b/i, /^fname$/i] },
+  { key: 'middleName', kind: 'text', tests: [/\bmiddle\s*(name|initial)\b/i] },
   { key: 'lastName', kind: 'text', tests: [/\b(last|family|sur)\s*name\b/i, /\bfamily-name\b/i, /^lname$/i] },
-  { key: 'preferredName', kind: 'text', tests: [/\b(preferred|chosen|nick)\s*name\b/i, /\bpronoun\b/i] },
+  { key: 'nameSuffix', kind: 'text', tests: [/\b(name\s*)?suffix\b/i, /\b(jr|sr|ii|iii)\.?\b/i] },
+  { key: 'preferredName', kind: 'text', tests: [/\b(preferred|chosen|nick)\s*name\b/i] },
   { key: 'email', kind: 'text', tests: [/\be-?mail\b/i, /autocomplete.*email/i] },
+  { key: 'phoneAlt', kind: 'text', tests: [/\b(alt(?:ernate)?|secondary|home|other)\b.*\bphone\b/i, /\bphone\s*(2|two)\b/i] },
   { key: 'phone', kind: 'text', tests: [/\b(phone|mobile|cell|telephone)\b/i, /\btel\b/i] },
-  { key: 'phoneAlt', kind: 'text', tests: [/\b(alt|secondary|home|other)\b.*\bphone\b/i] },
   { key: 'address1', kind: 'text', tests: [/\bstreet\s*address\b/i, /\baddress\s*(line)?\s*1\b/i, /^address$/i] },
   { key: 'address2', kind: 'text', tests: [/\baddress\s*(line)?\s*2\b/i, /\b(apt|suite|unit|building)\b/i] },
   { key: 'city', kind: 'text', tests: [/\b(city|town|locality)\b/i] },
@@ -26,11 +28,22 @@ const VOCAB: Vocab[] = [
   { key: 'headline', kind: 'text', tests: [/\b(headline|current\s*title|job\s*title)\b/i] },
   { key: 'summary', kind: 'longform', tests: [/\b(summary|about\s*you|bio|cover\s*letter)\b/i] },
   { key: 'workAuthorized', kind: 'choice', tests: [/\b(authorized|authorised)\s+to\s+work\b/i, /\blegally\s+eligible\b/i, /\bwork\s+authorization\b/i, /\bus\s+work\s+eligib/i] },
-  { key: 'needsSponsorship', kind: 'choice', tests: [/\bsponsor(ship)?\b/i, /\bvisa\b/i, /\bh-?1b\b/i] },
+  { key: 'needsSponsorship', kind: 'choice', tests: [/\bsponsor(ship)?\b/i, /\bvisa\s+sponsor(ship)?\b/i, /\bh-?1b\s+sponsor(ship)?\b/i] },
   { key: 'willingToRelocate', kind: 'choice', tests: [/\breloc/i, /\bwilling\s+to\s+move\b/i] },
   { key: 'noticePeriod', kind: 'text', tests: [/\bnotice\s*period\b/i, /\bavailable\s*(to\s*start|date)\b/i, /\bstart\s*date\b/i] },
   { key: 'salaryExpectation', kind: 'text', tests: [/\b(salary|compensation|pay|expected\s*comp)\b/i] },
   { key: 'pronouns', kind: 'text', tests: [/\bpronouns?\b/i] },
+  { key: 'desiredJobTitle', kind: 'text', tests: [/\b(desired|preferred)\s+(job\s+)?(title|role|position)\b/i] },
+  { key: 'yearsExperience', kind: 'text', tests: [/\b(years?|yrs?)\s+(of\s+)?(professional\s+)?experience\b/i, /\btotal\s+experience\b/i] },
+  { key: 'citizenship', kind: 'choice', tests: [/\bcitizenship\b/i, /\bcitizen\s+of\b/i] },
+  { key: 'visaStatus', kind: 'choice', tests: [/\b(visa|immigration)\s+status\b/i, /\bcurrent\s+visa\b/i] },
+  { key: 'employmentType', kind: 'choice', tests: [/\b(preferred|desired)\s+employment\s+type\b/i, /\b(full.?time|part.?time|contract)\s+preference\b/i] },
+  { key: 'remotePreference', kind: 'choice', tests: [/\b(remote|hybrid|on.?site)\s+(work\s+)?preference\b/i, /\bpreferred\s+work\s+(setting|location)\b/i] },
+  { key: 'willingToTravel', kind: 'choice', tests: [/\bwilling(ness)?\s+to\s+travel\b/i, /\btravel\s+requirement\b/i] },
+  { key: 'gender', kind: 'choice', tests: [/\b(gender|gender identity|sex)\b/i] },
+  { key: 'ethnicity', kind: 'choice', tests: [/\b(race|ethnicity|ethnic background)\b/i] },
+  { key: 'veteranStatus', kind: 'choice', tests: [/\b(protected\s+)?veteran(\s+status)?\b/i, /\bmilitary\s+service\b/i] },
+  { key: 'disabilityStatus', kind: 'choice', tests: [/\bdisability(\s+status)?\b/i, /\bself.identif(y|ication).*disab/i] },
   { key: 'resume', kind: 'file', tests: [/\b(resume|cv|curriculum)\b/i, /\battach.*file\b/i] },
   { key: 'exp.company', kind: 'experience', tests: [/\b(company|employer|organization|organisation)\b/i] },
   { key: 'exp.title', kind: 'experience', tests: [/\b(job\s*)?title\b/i, /\b(position|role)\b/i] },
@@ -49,7 +62,8 @@ const VOCAB: Vocab[] = [
 const AUTOCOMPLETE: Record<string, string> = {
   'given-name': 'firstName',
   'family-name': 'lastName',
-  'additional-name': 'preferredName',
+  'additional-name': 'middleName',
+  'honorific-suffix': 'nameSuffix',
   email: 'email',
   'tel': 'phone',
   'tel-national': 'phone',
@@ -125,7 +139,9 @@ export function classifyField(field: {
 export function identityValue(identity: Identity, key: string): string {
   if (key in identity) return String(identity[key as keyof Identity] ?? '')
   if (key === 'fullName') {
-    return [identity.firstName, identity.lastName].filter(Boolean).join(' ')
+    return [identity.firstName, identity.middleName, identity.lastName, identity.nameSuffix]
+      .filter(Boolean)
+      .join(' ')
   }
   return ''
 }
@@ -196,7 +212,7 @@ export function heuristicValue(
     raw = identityValue(store.identity, 'fullName')
   }
   if (field.kind === 'choice' || field.options.length > 0) {
-    if (field.matchKey === 'workAuthorized' || field.matchKey === 'needsSponsorship' || field.matchKey === 'willingToRelocate') {
+    if (field.matchKey === 'workAuthorized' || field.matchKey === 'needsSponsorship' || field.matchKey === 'willingToRelocate' || field.matchKey === 'willingToTravel') {
       return yesNoToChoice(raw, field.options)
     }
     return matchSelect(raw, field.options) || raw
@@ -244,8 +260,12 @@ export function profileContext(store: Store): string {
     `Location: ${id.city}, ${id.state}, ${id.country}`,
     `Email: ${id.email}`,
     `Phone: ${id.phone}`,
+    `Desired role: ${id.desiredJobTitle}`,
+    `Years of experience: ${id.yearsExperience}`,
     `Work authorized: ${id.workAuthorized}`,
     `Needs sponsorship: ${id.needsSponsorship}`,
+    `Visa status: ${id.visaStatus}`,
+    `Work preference: ${[id.employmentType, id.remotePreference].filter(Boolean).join(', ')}`,
     `Summary: ${id.summary}`,
     `Skills: ${store.skills.join(', ')}`,
     `Experience:\n${jobs}`,

@@ -13,7 +13,9 @@ export type MatchStatus = 'mapped' | 'needs-ai' | 'empty' | 'skipped' | 'writing
 
 export interface Identity {
   firstName: string
+  middleName: string
   lastName: string
+  nameSuffix: string
   preferredName: string
   email: string
   phone: string
@@ -36,6 +38,17 @@ export interface Identity {
   noticePeriod: string
   salaryExpectation: string
   pronouns: string
+  desiredJobTitle: string
+  yearsExperience: string
+  citizenship: string
+  visaStatus: string
+  employmentType: string
+  remotePreference: string
+  willingToTravel: YesNo
+  gender: string
+  ethnicity: string
+  veteranStatus: string
+  disabilityStatus: string
 }
 
 export interface Experience {
@@ -137,7 +150,9 @@ export interface FillResult {
 
 export const EMPTY_IDENTITY: Identity = {
   firstName: '',
+  middleName: '',
   lastName: '',
+  nameSuffix: '',
   preferredName: '',
   email: '',
   phone: '',
@@ -160,6 +175,17 @@ export const EMPTY_IDENTITY: Identity = {
   noticePeriod: '',
   salaryExpectation: '',
   pronouns: '',
+  desiredJobTitle: '',
+  yearsExperience: '',
+  citizenship: '',
+  visaStatus: '',
+  employmentType: '',
+  remotePreference: '',
+  willingToTravel: '',
+  gender: '',
+  ethnicity: '',
+  veteranStatus: '',
+  disabilityStatus: '',
 }
 
 export const EMPTY_SETTINGS: Settings = {

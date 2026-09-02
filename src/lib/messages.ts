@@ -50,6 +50,27 @@ export async function injectContent(tabId: number): Promise<void> {
   })
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function sendTabWhenReady<T extends Msg['type']>(
+  tabId: number,
+  msg: Extract<Msg, { type: T }>,
+): Promise<MsgResult[T]> {
+  const delays = [0, 25, 50, 100, 200, 400, 800]
+  let lastError: unknown
+  for (const delay of delays) {
+    if (delay) await wait(delay)
+    try {
+      return await chrome.tabs.sendMessage(tabId, msg)
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError
+}
+
 export async function sendTabOrInject<T extends Msg['type']>(
   tabId: number,
   msg: Extract<Msg, { type: T }>,
@@ -58,6 +79,6 @@ export async function sendTabOrInject<T extends Msg['type']>(
     return await chrome.tabs.sendMessage(tabId, msg)
   } catch {
     await injectContent(tabId)
-    return chrome.tabs.sendMessage(tabId, msg)
+    return sendTabWhenReady(tabId, msg)
   }
 }
