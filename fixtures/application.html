@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Staff Engineer — Northwind Labs</title>
+    <style>
+      body { font: 16px/1.4 system-ui; max-width: 640px; margin: 32px auto; color: #111; }
+      label { display: block; margin: 12px 0 4px; font-weight: 600; }
+      input, select, textarea { width: 100%; padding: 8px; }
+      fieldset { margin: 24px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Apply — Staff Engineer</h1>
+    <p>Synthetic Greenhouse-style form for Carbon. Not a real application.</p>
+    <form>
+      <label for="first_name">First name</label>
+      <input id="first_name" name="first_name" autocomplete="given-name" required />
+      <label for="last_name">Last name</label>
+      <input id="last_name" name="last_name" autocomplete="family-name" required />
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" />
+      <label for="phone">Phone</label>
+      <input id="phone" name="phone" type="tel" autocomplete="tel" />
+      <label for="linkedin">LinkedIn profile</label>
+      <input id="linkedin" name="linkedin" type="url" />
+      <label for="country">Country</label>
+      <select id="country" name="country" autocomplete="country-name">
+        <option value="">Select</option>
+        <option>United States</option>
+        <option>Canada</option>
+        <option>United Kingdom</option>
+      </select>
+      <label>Are you legally authorized to work in the United States?</label>
+      <label><input type="radio" name="work_auth" value="Yes" /> Yes</label>
+      <label><input type="radio" name="work_auth" value="No" /> No</label>
+      <label>Will you now or in the future require sponsorship?</label>
+      <label><input type="radio" name="sponsor" value="Yes" /> Yes</label>
+      <label><input type="radio" name="sponsor" value="No" /> No</label>
+      <fieldset>
+        <legend>Experience</legend>
+        <label for="company">Company</label>
+        <input id="company" name="company" autocomplete="organization" />
+        <label for="title">Title</label>
+        <input id="title" name="title" autocomplete="organization-title" />
+        <label for="start">Start date</label>
+        <input id="start" name="start_date" />
+        <label for="end">End date</label>
+        <input id="end" name="end_date" />
+        <label for="duties">What did you do in this role?</label>
+        <textarea id="duties" name="duties" rows="4"></textarea>
+      </fieldset>
+      <label for="why">Why do you want to work at Northwind Labs?</label>
+      <textarea id="why" name="why" rows="5"></textarea>
+      <label for="resume">Resume</label>
+      <input id="resume" name="resume" type="file" />
+      <p><button type="button">Submit (disabled — synthetic)</button></p>
+    </form>
+  </body>
+</html>
