@@ -16,6 +16,7 @@ export function Icon({
     | 'check'
     | 'alert'
     | 'spark'
+    | 'chevron'
   size?: number
 }) {
   const common = {
@@ -115,6 +116,12 @@ export function Icon({
       return (
         <svg {...common}>
           <path d="M12 3.5 13.7 9H19l-4.2 3.2L16.5 18 12 14.7 7.5 18l1.7-5.8L5 9h5.3L12 3.5Z" />
+        </svg>
+      )
+    case 'chevron':
+      return (
+        <svg {...common}>
+          <path d="m8 10 4 4 4-4" />
         </svg>
       )
   }

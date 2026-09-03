@@ -8,6 +8,7 @@
       label { display: block; margin: 12px 0 4px; font-weight: 600; }
       input, select, textarea { width: 100%; padding: 8px; }
       fieldset { margin: 24px 0; }
+      .add-experience { width: auto; padding: 8px 12px; }
     </style>
   </head>
   <body>
@@ -37,24 +38,84 @@
       <label>Will you now or in the future require sponsorship?</label>
       <label><input type="radio" name="sponsor" value="Yes" /> Yes</label>
       <label><input type="radio" name="sponsor" value="No" /> No</label>
-      <fieldset>
-        <legend>Experience</legend>
-        <label for="company">Company</label>
-        <input id="company" name="company" autocomplete="organization" />
-        <label for="title">Title</label>
-        <input id="title" name="title" autocomplete="organization-title" />
-        <label for="start">Start date</label>
-        <input id="start" name="start_date" />
-        <label for="end">End date</label>
-        <input id="end" name="end_date" />
-        <label for="duties">What did you do in this role?</label>
-        <textarea id="duties" name="duties" rows="4"></textarea>
-      </fieldset>
+      <section aria-labelledby="experience-heading">
+        <h2 id="experience-heading">Work experience</h2>
+        <div id="experiences">
+          <fieldset class="experience-entry">
+            <legend>Work experience 1</legend>
+            <label for="company_0">Company</label>
+            <input id="company_0" name="experience[0][company]" autocomplete="organization" />
+            <label for="title_0">Title</label>
+            <input id="title_0" name="experience[0][title]" autocomplete="organization-title" />
+            <label for="start_0">Start date</label>
+            <input id="start_0" name="experience[0][start_date]" />
+            <label for="end_0">End date</label>
+            <input id="end_0" name="experience[0][end_date]" />
+            <label for="duties_0">What did you do in this role?</label>
+            <textarea id="duties_0" name="experience[0][duties]" rows="4"></textarea>
+          </fieldset>
+        </div>
+        <button class="add-experience" type="button" aria-label="Add another work experience">+ Add another work experience</button>
+      </section>
       <label for="why">Why do you want to work at Northwind Labs?</label>
       <textarea id="why" name="why" rows="5"></textarea>
       <label for="resume">Resume</label>
       <input id="resume" name="resume" type="file" />
       <p><button type="button">Submit (disabled — synthetic)</button></p>
     </form>
+    <template id="experience-template">
+      <fieldset class="experience-entry">
+        <legend></legend>
+        <label data-for="company">Company</label>
+        <input data-field="company" autocomplete="organization" />
+        <label data-for="title">Title</label>
+        <input data-field="title" autocomplete="organization-title" />
+        <label data-for="start">Start date</label>
+        <input data-field="start" />
+        <label data-for="end">End date</label>
+        <input data-field="end" />
+        <label data-for="duties">What did you do in this role?</label>
+        <textarea data-field="duties" rows="4"></textarea>
+      </fieldset>
+    </template>
+    <script>
+      const flatRepeater = new URL(location.href).searchParams.has('carbon-flat')
+      document.querySelector('.add-experience').addEventListener('click', () => {
+        const index = document.querySelectorAll('#experiences legend').length
+        const fragment = document.querySelector('#experience-template').content.cloneNode(true)
+        fragment.querySelector('legend').textContent = `Work experience ${index + 1}`
+        for (const field of fragment.querySelectorAll('[data-field]')) {
+          const key = field.dataset.field
+          const id = `${key}_${index}`
+          field.id = id
+          field.name = `experience[${index}][${key}]`
+          fragment.querySelector(`[data-for="${key}"]`).htmlFor = id
+        }
+        if (flatRepeater) {
+          const entry = fragment.querySelector('.experience-entry')
+          document.querySelector('#experiences').append(...entry.childNodes)
+        } else {
+          document.querySelector('#experiences').append(fragment)
+        }
+      })
+      if (flatRepeater) {
+        const entry = document.querySelector('.experience-entry')
+        entry.replaceWith(...entry.childNodes)
+      }
+    </script>
+    <script type="module">
+      const repeaters = Number(new URL(location.href).searchParams.get('carbon-repeaters'))
+      if (repeaters > 0) {
+        const { expandRepeaters } = await import('../src/content/repeaters.ts')
+        const result = await expandRepeaters(repeaters, 0)
+        document.body.dataset.carbonRepeaterResult = JSON.stringify(result)
+        const { detectFields } = await import('../src/content/detect.ts')
+        document.body.dataset.carbonDetectedFields = JSON.stringify(
+          detectFields().fields
+            .filter((field) => field.kind === 'experience')
+            .map(({ label, matchKey, experienceIndex }) => ({ label, matchKey, experienceIndex })),
+        )
+      }
+    </script>
   </body>
 </html>

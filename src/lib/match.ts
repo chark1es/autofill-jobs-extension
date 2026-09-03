@@ -21,9 +21,9 @@ const VOCAB: Vocab[] = [
   { key: 'state', kind: 'text', tests: [/\b(state|province|region)\b/i] },
   { key: 'postalCode', kind: 'text', tests: [/\b(zip|postal)\s*code\b/i, /^zip$/i] },
   { key: 'country', kind: 'choice', tests: [/\bcountry\b/i] },
-  { key: 'linkedin', kind: 'text', tests: [/\blinkedin\b/i] },
+  { key: 'linkedin', kind: 'text', tests: [/\blinkedin\b/i, /\bprofessional\s*profile(\s*url)?\b/i] },
   { key: 'github', kind: 'text', tests: [/\bgithub\b/i] },
-  { key: 'portfolio', kind: 'text', tests: [/\b(portfolio|personal\s*site|website\s*url)\b/i] },
+  { key: 'portfolio', kind: 'text', tests: [/\b(portfolio|personal\s*site|website\s*url|vimeo|behance)\b/i] },
   { key: 'website', kind: 'text', tests: [/\b(website|homepage|url)\b/i] },
   { key: 'headline', kind: 'text', tests: [/\b(headline|current\s*title|job\s*title)\b/i] },
   { key: 'summary', kind: 'longform', tests: [/\b(summary|about\s*you|bio|cover\s*letter)\b/i] },
@@ -46,17 +46,17 @@ const VOCAB: Vocab[] = [
   { key: 'disabilityStatus', kind: 'choice', tests: [/\bdisability(\s+status)?\b/i, /\bself.identif(y|ication).*disab/i] },
   { key: 'resume', kind: 'file', tests: [/\b(resume|cv|curriculum)\b/i, /\battach.*file\b/i] },
   { key: 'exp.company', kind: 'experience', tests: [/\b(company|employer|organization|organisation)\b/i] },
+  { key: 'exp.description', kind: 'experience', tests: [/\b(responsibilit|description|achievements?|what\s+(did\s+)?you\s+(do|did))\b/i] },
   { key: 'exp.title', kind: 'experience', tests: [/\b(job\s*)?title\b/i, /\b(position|role)\b/i] },
   { key: 'exp.location', kind: 'experience', tests: [/\b(job|work|office)\s*location\b/i] },
   { key: 'exp.startDate', kind: 'experience', tests: [/\b(start|from)\s*(date|month|year)\b/i, /\bfrom\b/i] },
   { key: 'exp.endDate', kind: 'experience', tests: [/\b(end|to|until)\s*(date|month|year)\b/i, /\b(currently?\s*work|present)\b/i] },
-  { key: 'exp.description', kind: 'experience', tests: [/\b(responsibilit|description|achievements?|what\s*you\s*did)\b/i] },
   { key: 'edu.school', kind: 'education', tests: [/\b(school|university|college|institution)\b/i] },
   { key: 'edu.degree', kind: 'education', tests: [/\bdegree\b/i, /\b(bachel|master|phd|diploma)\b/i] },
   { key: 'edu.field', kind: 'education', tests: [/\b(major|field\s*of\s*study|discipline)\b/i] },
   { key: 'edu.gpa', kind: 'education', tests: [/\bgpa\b/i] },
-  { key: 'edu.startDate', kind: 'education', tests: [/\b(attended\s*from|enrollment)\b/i] },
-  { key: 'edu.endDate', kind: 'education', tests: [/\b(graduation|graduated)\b/i] },
+  { key: 'edu.startDate', kind: 'education', tests: [/\b(attended\s*from|enrollment)\b/i, /\b(start|from)\s*(date|month|year)\b/i] },
+  { key: 'edu.endDate', kind: 'education', tests: [/\b(graduation|graduated)\b/i, /\b(end|to|until)\s*(date|month|year)\b/i] },
 ]
 
 const AUTOCOMPLETE: Record<string, string> = {
@@ -89,6 +89,7 @@ function blob(field: {
   return [field.label, field.name, field.autocomplete, field.inputType]
     .filter(Boolean)
     .join(' ')
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
     .replace(/[_-]+/g, ' ')
 }
 
@@ -99,6 +100,7 @@ export function classifyField(field: {
   inputType: string
   tag: string
   options: string[]
+  context?: string
 }): { matchKey: string; kind: DetectedField['kind'] } {
   const ac = field.autocomplete.split(' ').pop() ?? ''
   if (AUTOCOMPLETE[ac]) {
@@ -114,7 +116,25 @@ export function classifyField(field: {
   }
 
   const text = blob(field)
-  for (const v of VOCAB) {
+  const sectionSignal = `${field.context ?? ''} ${field.name}`
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+  const sectionKind = /\b(experience|employment|work\s*history|job\s*history)\b/i.test(sectionSignal)
+    ? 'experience'
+    : /\b(education|school|college|university|academic)\b/i.test(sectionSignal)
+      ? 'education'
+      : null
+  const looksLong =
+    field.tag === 'textarea' ||
+    text.length > 80 ||
+    /\?/.test(field.label) ||
+    /\b(describe|explain|why|how|tell us|tell me|cover letter|additional (information|comments)|motivation|motivated|interest(?:ed)?|qualifications?|accomplishments?|challenge|proud of|experience with|please provide|please share)\b/i.test(text)
+  if (looksLong && !sectionKind) return { matchKey: 'longform', kind: 'longform' }
+
+  const ordered = sectionKind
+    ? [...VOCAB.filter((item) => item.kind === sectionKind), ...VOCAB.filter((item) => item.kind !== sectionKind)]
+    : VOCAB
+  for (const v of ordered) {
     if (v.tests.some((re) => re.test(text))) {
       return { matchKey: v.key, kind: v.kind }
     }
@@ -125,15 +145,15 @@ export function classifyField(field: {
     field.inputType === 'radio' ||
     field.inputType === 'checkbox' ||
     field.options.length > 0
-  const looksLong =
-    field.tag === 'textarea' ||
-    text.length > 80 ||
-    /\?/.test(field.label) ||
-    /\b(describe|explain|why|tell us|cover letter|additional)\b/i.test(text)
-
   if (looksLong) return { matchKey: 'longform', kind: 'longform' }
   if (isChoice) return { matchKey: 'choice', kind: 'choice' }
   return { matchKey: 'unknown', kind: 'unknown' }
+}
+
+export function isOpenEndedField(field: DetectedField): boolean {
+  if (field.kind === 'longform' || field.tag === 'textarea') return true
+  const text = `${field.label} ${field.name}`
+  return /\?|\b(describe|explain|why|how|tell us|tell me|please (provide|share)|motivation|interest(?:ed)?|qualifications?|accomplishments?|challenge|proud of|experience with|additional (information|comments))\b/i.test(text)
 }
 
 export function identityValue(identity: Identity, key: string): string {
@@ -220,9 +240,25 @@ export function heuristicValue(
   return raw
 }
 
+export function suggestionHints(field: DetectedField, store: Store): string[] {
+  const id = store.identity
+  if (['address1', 'address2', 'city', 'state', 'postalCode', 'country'].includes(field.matchKey)) {
+    return [id.address1, id.address2, id.city, id.state, id.postalCode, id.country].filter(Boolean)
+  }
+  if (field.kind === 'experience') {
+    const job = store.experience[field.experienceIndex ?? 0]
+    return job ? [job.company, job.title, job.location].filter(Boolean) : []
+  }
+  if (field.kind === 'education') {
+    const education = store.education[field.educationIndex ?? 0]
+    return education ? [education.school, education.degree, education.field, education.location].filter(Boolean) : []
+  }
+  return []
+}
+
 export function needsAI(field: DetectedField, value: string): boolean {
   if (value) return false
-  return field.kind === 'longform' || field.kind === 'unknown' || field.kind === 'choice'
+  return isOpenEndedField(field) || field.kind === 'unknown' || field.kind === 'choice'
 }
 
 export function findSavedAnswer(question: string, store: Store): string {
@@ -248,11 +284,14 @@ export function profileContext(store: Store): string {
   const jobs = store.experience
     .map(
       (e) =>
-        `- ${e.title} at ${e.company} (${e.startDate}–${e.current ? 'present' : e.endDate})\n  ${e.description}`,
+        `- ${e.title} at ${e.company}${e.location ? `, ${e.location}` : ''} (${e.startDate}–${e.current ? 'present' : e.endDate})\n  ${e.description}`,
     )
     .join('\n')
   const edu = store.education
-    .map((e) => `- ${e.degree} in ${e.field}, ${e.school} (${e.endDate})`)
+    .map((e) => `- ${e.degree} in ${e.field}, ${e.school}${e.location ? `, ${e.location}` : ''} (${e.startDate}–${e.endDate})${e.gpa ? `, GPA ${e.gpa}` : ''}`)
+    .join('\n')
+  const savedAnswers = store.answers
+    .map((answer) => `- ${answer.question}: ${answer.answer}`)
     .join('\n')
   return [
     `Name: ${id.firstName} ${id.lastName}`,
@@ -266,10 +305,14 @@ export function profileContext(store: Store): string {
     `Needs sponsorship: ${id.needsSponsorship}`,
     `Visa status: ${id.visaStatus}`,
     `Work preference: ${[id.employmentType, id.remotePreference].filter(Boolean).join(', ')}`,
+    `Portfolio: ${id.portfolio || id.website}`,
+    `LinkedIn: ${id.linkedin}`,
+    `GitHub: ${id.github}`,
     `Summary: ${id.summary}`,
     `Skills: ${store.skills.join(', ')}`,
     `Experience:\n${jobs}`,
     `Education:\n${edu}`,
+    savedAnswers ? `Previously saved answers:\n${savedAnswers}` : '',
     store.resume?.text ? `Resume text:\n${store.resume.text.slice(0, 6000)}` : '',
   ]
     .filter(Boolean)

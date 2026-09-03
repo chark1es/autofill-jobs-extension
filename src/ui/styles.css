@@ -212,24 +212,170 @@ body.options .app {
   word-break: break-word;
 }
 
+.open-ended .field-label { color: var(--ink); }
+
+.ai-answer {
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.ai-answer textarea {
+  width: 100%;
+  min-height: 82px;
+  padding: 7px 8px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.answer-placeholder {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.btn-ai {
+  padding: 5px 8px;
+  background: var(--ai-bg);
+  color: var(--ai);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.btn-ai:hover { background: #f5e8bf; }
+
 .chip {
   display: inline-flex;
   align-items: center;
-  font-size: 10px;
+  justify-content: center;
+  align-self: center;
+  flex: 0 0 auto;
+  width: max-content;
+  height: 16px;
+  min-height: 0;
+  max-height: 16px;
+  line-height: 1;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  padding: 2px 7px;
+  padding: 0 6px;
   border-radius: 999px;
   background: var(--empty-bg);
   color: var(--empty);
   white-space: nowrap;
+  overflow: hidden;
 }
 
+.compact-card summary > .chip { align-self: center; }
+
 .chip.mapped { background: var(--mapped-bg); color: var(--mapped); }
+.chip.filled { background: var(--mapped-bg); color: var(--mapped); }
 .chip.ai { background: var(--ai-bg); color: var(--ai); }
 .chip.failed { background: var(--danger-bg); color: var(--danger); }
 .chip.writing { background: #e8eefc; color: var(--fill); }
+
+.status-cell {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle !important;
+}
+
+.compact-table td { padding: 7px 8px 7px 0; }
+
+.fill-section { margin-top: 14px; }
+
+.fill-section h2 {
+  margin: 0 0 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.compact-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.compact-card summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.compact-card summary::-webkit-details-marker { display: none; }
+
+.card-chevron {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.compact-card[open] .card-chevron { transform: rotate(180deg); }
+
+.card-heading {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.card-heading strong,
+.card-heading > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-heading strong { font-size: 13px; }
+
+.card-heading > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.compact-card-body {
+  padding: 0 10px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.compact-card-body .table th { padding-top: 10px; }
+
+.card-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+  padding-top: 10px;
+}
+
+.editor-card { margin-bottom: 8px; }
 
 .form-grid {
   display: grid;
@@ -306,6 +452,37 @@ textarea { min-height: 72px; resize: vertical; }
   border-color: transparent;
   background: var(--mapped-bg);
   color: var(--mapped);
+}
+
+.support-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.support-banner p { margin: 0; }
+
+.diagnostics-action {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.support-banner .diagnostics-action {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.toolbar .diagnostics-action { margin-top: 0; }
+
+.diagnostics-action small {
+  max-width: 260px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.3;
 }
 
 .empty {

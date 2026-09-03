@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Aquent-style Angular quick apply fixture</title>
+    <style>
+      body { font: 16px/1.4 system-ui; max-width: 640px; margin: 32px auto; }
+      mat-form-field, label { display: block; margin: 12px 0; }
+      input { width: 100%; padding: 8px; }
+      .file-input { display: none; }
+      [role="listbox"] { border: 1px solid #ccc; }
+      [role="option"] { padding: 8px; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <form class="quick-apply-form">
+      <mat-form-field>
+        <label for="first-name"><mat-label></mat-label></label>
+        <input id="first-name" formcontrolname="firstName" required />
+      </mat-form-field>
+      <mat-form-field>
+        <label for="last-name"><mat-label></mat-label></label>
+        <input id="last-name" formcontrolname="lastName" required />
+      </mat-form-field>
+      <mat-form-field>
+        <label for="phone-number"><mat-label></mat-label></label>
+        <input id="phone-number" formcontrolname="phone" required />
+      </mat-form-field>
+    </form>
+
+    <app-location-picker>
+      <mat-form-field>
+        <input
+          id="locationAutocomplete"
+          formcontrolname="homeLocation"
+          autocomplete="off"
+          placeholder="Enter zip/postal code"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          required
+        />
+      </mat-form-field>
+      <div id="location-options" role="listbox" hidden></div>
+    </app-location-picker>
+
+    <app-file-upload>
+      <input id="resume-file" class="file-input" type="file" accept="application/pdf,text/plain" />
+      <button id="upload-button" type="button">Browse</button>
+    </app-file-upload>
+
+    <section>
+      <input formcontrolname="url" placeholder="Professional Profile URL" />
+      <input formcontrolname="url" placeholder="Website, Vimeo, Behance etc" />
+    </section>
+
+    <input id="communication-preference-checkbox-input" formcontrolname="communicationPreference" type="checkbox" />
+    <input id="agree-to-terms-checkbox-input" formcontrolname="termsAccepted" type="checkbox" />
+
+    <script>
+      const locationInput = document.querySelector('#locationAutocomplete')
+      const locationOptions = document.querySelector('#location-options')
+      const phoneEvents = []
+      for (const eventName of ['input', 'change']) {
+        document.querySelector('#phone-number').addEventListener(eventName, (event) => {
+          phoneEvents.push(`${eventName}:${event.target.value}`)
+          document.body.dataset.phoneEvents = JSON.stringify(phoneEvents)
+        })
+      }
+      locationInput.addEventListener('input', () => {
+        setTimeout(() => {
+          locationOptions.hidden = false
+          locationOptions.innerHTML = `
+            <div role="option">${locationInput.value}, United States</div>
+            <mat-option role="option">San Diego, CA ${locationInput.value}, United States</mat-option>
+          `
+          locationOptions.querySelectorAll('[role="option"]').forEach((option) => {
+            option.addEventListener('click', (event) => {
+              locationInput.value = event.currentTarget.textContent.trim()
+              locationInput.dataset.suggestionSelected = 'true'
+              locationOptions.hidden = true
+            })
+          })
+        }, 125)
+      })
+    </script>
+    <script type="module">
+      if (new URL(location.href).searchParams.has('carbon-test')) {
+        const { detectFields } = await import('../src/content/detect.ts')
+        const { fillFields } = await import('../src/content/fill.ts')
+        const detected = detectFields()
+        const values = {
+          firstName: 'Taylor',
+          lastName: 'Morgan',
+          phone: '555-0100',
+          postalCode: '92101',
+          linkedin: 'https://www.linkedin.com/in/taylor-morgan',
+          portfolio: 'https://portfolio.example.com',
+          resume: '__resume__',
+        }
+        const items = detected.fields
+          .filter((field) => values[field.matchKey])
+          .map((field) => ({
+            uid: field.uid,
+            value: values[field.matchKey],
+            source: 'heuristic',
+            suggestionHints: field.matchKey === 'postalCode' ? ['San Diego', 'CA', 'United States'] : [],
+          }))
+        document.body.dataset.carbonItems = JSON.stringify(items)
+        const result = await fillFields(items, {
+          name: 'resume.txt',
+          mime: 'text/plain',
+          dataBase64: 'VGVzdCByZXN1bWU=',
+        })
+        document.body.dataset.carbonDetected = JSON.stringify(
+          detected.fields.map(({ matchKey, label }) => ({ matchKey, label })),
+        )
+        document.body.dataset.carbonFillResult = JSON.stringify(result)
+        const { collectPageDiagnostics } = await import('../src/content/diagnostics.ts')
+        const diagnostics = collectPageDiagnostics()
+        document.body.dataset.carbonDiagnosticsCheck = JSON.stringify({
+          fields: diagnostics.fields.length,
+          buttons: diagnostics.buttons.length,
+          frameworks: diagnostics.frameworks,
+          containsFirstNameValue: diagnostics.sanitizedHtml.includes('Taylor'),
+          containsPhoneValue: diagnostics.sanitizedHtml.includes('555-0100'),
+          containsScripts: diagnostics.sanitizedHtml.includes('<script'),
+          htmlLength: diagnostics.sanitizedHtml.length,
+        })
+      }
+    </script>
+  </body>
+</html>

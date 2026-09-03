@@ -3,6 +3,7 @@ import type { DetectedField, DetectResult } from '../lib/types'
 
 const SKIP_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'color'])
 const HONEYPOT = /\b(honeypot|website_url|fax|leave.?blank)\b/i
+const MANUAL_CHECKBOX = /\b(terms?|privacy|consent|communication.?preference|marketing|newsletter|opt.?in)\b/i
 
 function visible(el: HTMLElement): boolean {
   if (el.getAttribute('aria-hidden') === 'true') return false
@@ -33,6 +34,13 @@ function textOf(el: Element | null): string {
   return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
+function sectionContext(el: HTMLElement): string {
+  const section = el.closest(
+    'fieldset, section, [class*="experience"], [class*="employment"], [class*="education"], [class*="school"]',
+  )
+  return textOf(section?.querySelector('legend, h1, h2, h3, h4, [role="heading"]') ?? null)
+}
+
 function labelledBy(el: HTMLElement): string {
   const id = el.getAttribute('aria-labelledby')
   if (!id) return ''
@@ -49,18 +57,29 @@ export function fieldLabel(el: HTMLElement): string {
   if (by) return by
   if (el.id) {
     const viaFor = el.ownerDocument.querySelector(`label[for="${cssEscape(el.id)}"]`)
-    if (viaFor) return textOf(viaFor)
+    const viaForText = textOf(viaFor)
+    if (viaForText) return viaForText
   }
   const wrap = el.closest('label')
-  if (wrap) return textOf(wrap)
+  const wrapText = textOf(wrap)
+  if (wrapText) return wrapText
   const dt = el.closest('div, li, td, section, fieldset')
   const nearby = dt?.querySelector('label, legend, .label, [class*="label"], [data-automation-id$="label"]')
-  if (nearby && nearby !== el) return textOf(nearby)
+  const nearbyText = nearby !== el ? textOf(nearby ?? null) : ''
+  if (nearbyText) return nearbyText
   const prev = el.previousElementSibling
-  if (prev && /label|legend|span|p|div/i.test(prev.tagName)) return textOf(prev)
+  const previousText = prev && /label|legend|span|p|div/i.test(prev.tagName) ? textOf(prev) : ''
+  if (previousText) return previousText
   const workday = el.getAttribute('data-automation-id')
   if (workday) return workday.replace(/[-_]/g, ' ')
-  return (el.getAttribute('placeholder') ?? el.getAttribute('name') ?? '').trim()
+  return (
+    el.getAttribute('placeholder') ||
+    el.getAttribute('name') ||
+    el.getAttribute('formcontrolname') ||
+    el.getAttribute('ng-reflect-name') ||
+    el.id ||
+    ''
+  ).trim()
 }
 
 function cssEscape(id: string): string {
@@ -143,37 +162,81 @@ export function elementByUid(uid: string): HTMLElement | null {
 function clusterIndex(
   el: HTMLElement,
   kind: 'experience' | 'education',
-  fields: Array<{ el: HTMLElement; kind: string }>,
+  fields: Array<{ el: HTMLElement; kind: string; matchKey: string }>,
 ): number | null {
-  const peers = fields.filter((f) => f.kind === kind).map((f) => f.el)
+  const peers = fields.filter((field) => field.kind === kind)
   if (peers.length === 0) return null
-  const sections = new Map<Element, number>()
-  let next = 0
-  for (const p of peers) {
-    const root =
-      p.closest('[class*="experience"], [class*="employment"], [class*="education"], [data-automation-id*="education"], [data-automation-id*="work"], li, tr, [class*="repeat"]') ??
-      p.parentElement
-    if (!root) continue
-    if (!sections.has(root)) sections.set(root, next++)
+
+  const rootFor = (field: HTMLElement) =>
+    field.closest(
+      '[class*="experience"], [class*="employment"], [class*="education"], [data-automation-id*="education"], [data-automation-id*="work"], fieldset, li, tr, [class*="repeat"]',
+    ) ?? field.parentElement
+  const rootCounts = new Map<Element, number>()
+  for (const peer of peers) {
+    const root = rootFor(peer.el)
+    if (root) rootCounts.set(root, (rootCounts.get(root) ?? 0) + 1)
   }
-  const mine =
-    el.closest('[class*="experience"], [class*="employment"], [class*="education"], [data-automation-id*="education"], [data-automation-id*="work"], li, tr, [class*="repeat"]') ??
-    el.parentElement
-  if (mine && sections.has(mine)) return sections.get(mine)!
-  const idx = peers.indexOf(el)
-  return idx >= 0 ? idx : 0
+
+  // Prefer explicit repeated containers when each container owns multiple
+  // fields. A collection of one-field wrappers is not an experience group.
+  if (rootCounts.size > 1 && [...rootCounts.values()].every((count) => count > 1)) {
+    const sections = new Map<Element, number>()
+    let next = 0
+    for (const peer of peers) {
+      const root = rootFor(peer.el)
+      if (root && !sections.has(root)) sections.set(root, next++)
+    }
+    const mine = rootFor(el)
+    if (mine && sections.has(mine)) return sections.get(mine)!
+  }
+
+  // Some ATSs put every repeated entry inside one shared container. Infer a
+  // new group when a reliable anchor such as company/title repeats.
+  const anchors = kind === 'experience'
+    ? new Set(['exp.company', 'exp.title'])
+    : new Set(['edu.school', 'edu.degree'])
+  const indexes = new Map<HTMLElement, number>()
+  const seen = new Set<string>()
+  let next = 0
+  for (const peer of peers) {
+    if (anchors.has(peer.matchKey) && seen.has(peer.matchKey)) {
+      next += 1
+      seen.clear()
+    }
+    indexes.set(peer.el, next)
+    if (anchors.has(peer.matchKey)) seen.add(peer.matchKey)
+  }
+  return indexes.get(el) ?? 0
 }
 
 export function detectFields(): DetectResult {
-  const els = allElements(document).filter((el) => isField(el) && visible(el))
+  const els = allElements(document).filter((el) => {
+    if (!isField(el)) return false
+    if (el instanceof HTMLInputElement && el.type === 'file') return true
+    return visible(el)
+  })
   const prelim = els
     .filter((el) => {
-      const name = `${el.getAttribute('name') ?? ''} ${el.getAttribute('id') ?? ''}`
-      return !HONEYPOT.test(name)
+      const identity = [
+        el.getAttribute('name'),
+        el.getAttribute('formcontrolname'),
+        el.getAttribute('ng-reflect-name'),
+        el.id,
+      ].filter(Boolean).join(' ')
+      if (HONEYPOT.test(identity)) return false
+      if (el instanceof HTMLInputElement && el.type === 'checkbox' && MANUAL_CHECKBOX.test(identity)) {
+        return false
+      }
+      return true
     })
     .map((el) => {
       const label = fieldLabel(el)
-      const name = el.getAttribute('name') ?? ''
+      const name =
+        el.getAttribute('name') ||
+        el.getAttribute('formcontrolname') ||
+        el.getAttribute('ng-reflect-name') ||
+        el.id ||
+        ''
       const autocomplete = el.getAttribute('autocomplete') ?? ''
       const inputType = el instanceof HTMLInputElement ? el.type : el.tagName.toLowerCase()
       const tag = el.tagName.toLowerCase()
@@ -185,6 +248,7 @@ export function detectFields(): DetectResult {
         inputType,
         tag,
         options,
+        context: sectionContext(el),
       })
       return { el, label, name, autocomplete, inputType, tag, options, matchKey, kind }
     })

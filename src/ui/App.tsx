@@ -3,7 +3,7 @@ import type { DetectedField, DetectResult, Experience, Education, MatchStatus, S
 import { EMPTY_IDENTITY, EMPTY_STORE } from '../lib/types'
 import { fromExportBundle, loadStore, saveStore, subscribeStore, toExportBundle, uid } from '../lib/storage'
 import { sendTabOrInject } from '../lib/messages'
-import { findSavedAnswer, heuristicValue, needsAI } from '../lib/match'
+import { findSavedAnswer, heuristicValue, isOpenEndedField, needsAI, suggestionHints } from '../lib/match'
 import { completeWithOpenRouter, fetchModelPricing, formatModelCost, formatUsdShort, type ModelPricing } from '../lib/openrouter'
 import { CUSTOM_MODEL, isPresetModel, OPENROUTER_MODELS } from '../lib/types'
 import { Icon } from './icons'
@@ -14,12 +14,46 @@ interface Row {
   field: DetectedField
   value: string
   status: MatchStatus
+  source: 'heuristic' | 'ai'
 }
 
 async function currentTab(): Promise<chrome.tabs.Tab | null> {
   if (typeof chrome === 'undefined' || !chrome.tabs?.query) return null
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   return tab ?? null
+}
+
+function valuesMatch(current: string, planned: string): boolean {
+  if (!current || !planned || planned === '__resume__') return false
+  const normalize = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ')
+  return normalize(current) === normalize(planned)
+}
+
+function rowsFor(detect: DetectResult, store: Store): Row[] {
+  return detect.fields.map((field) => {
+    const saved = findSavedAnswer(field.label, store)
+    const value = saved || heuristicValue(field, store)
+    const status: MatchStatus = valuesMatch(field.currentValue, value)
+      ? 'filled'
+      : value
+        ? 'mapped'
+        : needsAI(field, value)
+          ? 'needs-ai'
+          : 'empty'
+    return { field, value, status, source: 'heuristic' }
+  })
+}
+
+function experienceProgress(rows: Row[]): { label: string; tone: MatchStatus } {
+  if (!rows.length) return { label: 'Not on form', tone: 'empty' }
+  const filled = rows.filter((row) => row.status === 'filled').length
+  const failed = rows.filter((row) => row.status === 'failed').length
+  const ready = rows.filter((row) => Boolean(row.value)).length
+  if (filled === rows.length) return { label: 'Filled', tone: 'filled' }
+  if (filled > 0) return { label: `${filled}/${rows.length} filled`, tone: 'needs-ai' }
+  if (failed > 0) return { label: 'Fill failed', tone: 'failed' }
+  if (ready < rows.length) return { label: 'Needs info', tone: 'needs-ai' }
+  return { label: 'Not filled', tone: 'empty' }
 }
 
 async function linkedInProfileTab(): Promise<chrome.tabs.Tab | null> {
@@ -51,6 +85,7 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
   const [detect, setDetect] = useState<DetectResult | null>(null)
   const [rows, setRows] = useState<Row[]>([])
   const [busy, setBusy] = useState('')
+  const [writingUid, setWritingUid] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -96,23 +131,67 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
       setRows([])
       return
     }
-    setRows(
-      detect.fields.map((field) => {
-        const saved = findSavedAnswer(field.label, store)
-        const value = saved || heuristicValue(field, store)
-        const status: MatchStatus = value
-          ? 'mapped'
-          : needsAI(field, value)
-            ? 'needs-ai'
-            : 'empty'
-        return { field, value, status }
-      }),
-    )
+    setRows(rowsFor(detect, store))
   }, [detect, store])
 
   const mapped = rows.filter((r) => r.status === 'mapped' || r.value).length
   const aiCount = rows.filter((r) => r.status === 'needs-ai').length
   const displayName = [store.identity.firstName, store.identity.lastName].filter(Boolean).join(' ')
+
+  function updateRowValue(uid: string, value: string) {
+    setRows((current) => current.map((row) => {
+      if (row.field.uid !== uid) return row
+      return {
+        ...row,
+        value,
+        status: value ? 'mapped' : needsAI(row.field, value) ? 'needs-ai' : 'empty',
+      }
+    }))
+  }
+
+  async function answerWithAI(uid: string) {
+    const row = rows.find((candidate) => candidate.field.uid === uid)
+    if (!row) return
+    if (!store.settings.openrouterKey) {
+      setError('Add an OpenRouter key in Settings before asking AI to write an answer.')
+      return
+    }
+    if (!store.settings.openrouterModel) {
+      setError('Choose an OpenRouter model in Settings before asking AI to write an answer.')
+      return
+    }
+    setError('')
+    setNotice('')
+    setBusy('Writing tailored answer')
+    setWritingUid(uid)
+    setRows((current) => current.map((candidate) =>
+      candidate.field.uid === uid ? { ...candidate, status: 'writing' } : candidate,
+    ))
+    try {
+      const value = await completeWithOpenRouter({
+        key: store.settings.openrouterKey,
+        model: store.settings.openrouterModel,
+        question: row.field.label,
+        options: row.field.options,
+        store,
+        pageTitle: detect?.title ?? '',
+      })
+      setRows((current) => current.map((candidate) =>
+        candidate.field.uid === uid
+          ? { ...candidate, value, status: 'mapped', source: 'ai' }
+          : candidate,
+      ))
+      setNotice('Tailored answer is ready. Review it, then press Fill.')
+    } catch (e) {
+      setRows((current) => current.map((candidate) =>
+        candidate.field.uid === uid ? { ...candidate, status: 'failed' } : candidate,
+      ))
+      setError(e instanceof Error ? e.message : 'Could not write the answer.')
+    } finally {
+      setWritingUid('')
+      setBusy('')
+    }
+  }
 
   async function fillNow() {
     setError('')
@@ -123,8 +202,29 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
       setError('No active tab.')
       return
     }
-    const nextRows = [...rows]
     try {
+      await sendTabOrInject(t.id, {
+        type: 'EXPAND_REPEATERS',
+        payload: { experience: store.experience.length, education: store.education.length },
+      })
+      const freshDetect = await ensureDetect(t.id)
+      setDetect(freshDetect)
+      const drafts = new Map(
+        rows
+          .filter((row) => isOpenEndedField(row.field) && row.value)
+          .map((row) => [row.field.uid, row] as const),
+      )
+      const nextRows = rowsFor(freshDetect, store).map((row) => {
+        const draft = drafts.get(row.field.uid)
+        if (!draft) return row
+        return {
+          ...row,
+          value: draft.value,
+          source: draft.source,
+          status: valuesMatch(row.field.currentValue, draft.value) ? 'filled' as const : 'mapped' as const,
+        }
+      })
+      setRows(nextRows)
       for (let i = 0; i < nextRows.length; i++) {
         const row = nextRows[i]
         if (row.value) continue
@@ -139,9 +239,9 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
             question: row.field.label,
             options: row.field.options,
             store,
-            pageTitle: detect?.title ?? t.title ?? '',
+            pageTitle: freshDetect.title || t.title || '',
           })
-          nextRows[i] = { ...row, value: text, status: 'mapped' }
+          nextRows[i] = { ...row, value: text, status: 'mapped', source: 'ai' }
         } catch (e) {
           nextRows[i] = {
             ...row,
@@ -156,13 +256,20 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
         .map((r) => ({
           uid: r.field.uid,
           value: r.value,
-          source: (r.status === 'mapped' ? 'heuristic' : 'ai') as 'heuristic' | 'ai',
+          source: r.source,
+          suggestionHints: suggestionHints(r.field, store),
         }))
       const resume = store.resume
         ? { name: store.resume.name, mime: store.resume.mime, dataBase64: store.resume.dataBase64 }
         : undefined
-      await sendTabOrInject(t.id, { type: 'FILL', payload: { items, resume } })
-      setNotice(`Wrote ${items.length} fields.`)
+      const result = await sendTabOrInject(t.id, { type: 'FILL', payload: { items, resume } })
+      const filled = new Set(result.filledUids ?? [])
+      const failed = new Set(result.failed.map((item) => item.uid))
+      setRows(nextRows.map((row) => ({
+        ...row,
+        status: filled.has(row.field.uid) ? 'filled' : failed.has(row.field.uid) ? 'failed' : row.status,
+      })))
+      setNotice(`Wrote ${result.filled} fields${result.failed.length ? ` · ${result.failed.length} failed` : ''}.`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Fill failed.')
     } finally {
@@ -200,6 +307,31 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
     }
   }
 
+  async function exportPageDiagnostics() {
+    setError('')
+    setBusy('Exporting page data')
+    try {
+      const active = await currentTab()
+      if (!active?.id) throw new Error('No website tab is active.')
+      const diagnostics = await sendTabOrInject(active.id, { type: 'COLLECT_PAGE_DIAGNOSTICS' })
+      const blob = new Blob([JSON.stringify(diagnostics, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const host = (diagnostics.page.host || 'website').replace(/[^a-z0-9.-]+/gi, '-')
+      link.href = url
+      link.download = `carbon-page-diagnostics-${host}.json`
+      document.body.append(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setNotice('Page diagnostics downloaded. Attach the JSON file when requesting support.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not export page diagnostics.')
+    } finally {
+      setBusy('')
+    }
+  }
+
   return (
     <div class="app">
       <header class="header">
@@ -231,13 +363,17 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
             displayName={displayName}
             onRefresh={() => void refreshDetect()}
             onLinkedIn={() => void importLinkedIn()}
+            onDiagnostics={() => void exportPageDiagnostics()}
+            writingUid={writingUid}
+            onAnswerWithAI={(uid) => void answerWithAI(uid)}
+            onValueChange={updateRowValue}
           />
         ) : null}
         {tab === 'profile' ? (
           <ProfileTab store={store} onChange={(identity) => void persist({ ...store, identity })} onSkills={(skills) => void persist({ ...store, skills })} />
         ) : null}
         {tab === 'experience' ? (
-          <ExperienceTab store={store} persist={persist} />
+          <ExperienceTab store={store} rows={rows} persist={persist} />
         ) : null}
         {tab === 'resume' ? (
           <ResumeTab store={store} persist={persist} setError={setError} setNotice={setNotice} />
@@ -273,6 +409,10 @@ function FillTab({
   displayName,
   onRefresh,
   onLinkedIn,
+  onDiagnostics,
+  writingUid,
+  onAnswerWithAI,
+  onValueChange,
 }: {
   store: Store
   detect: DetectResult | null
@@ -280,6 +420,10 @@ function FillTab({
   displayName: string
   onRefresh: () => void
   onLinkedIn: () => void
+  onDiagnostics: () => void
+  writingUid: string
+  onAnswerWithAI: (uid: string) => void
+  onValueChange: (uid: string, value: string) => void
 }) {
   if (detect?.isLinkedIn) {
     return (
@@ -295,11 +439,14 @@ function FillTab({
       </div>
     )
   }
+  const unknownCount = rows.filter((row) => row.field.matchKey === 'unknown').length
+  const needsDiagnostics = !detect || rows.length === 0 || unknownCount > 0
   if (!displayName && !store.identity.email) {
     return (
       <div class="empty">
         <h2>Empty candidate file</h2>
         <p>Add identity under Profile, upload a resume, or import from a LinkedIn tab. Fill reads this file, not the page.</p>
+        {needsDiagnostics ? <DiagnosticsButton onClick={onDiagnostics} /> : null}
       </div>
     )
   }
@@ -308,41 +455,174 @@ function FillTab({
       <div class="empty">
         <h2>No form on this page</h2>
         <p>Open a Greenhouse, Lever, Workday, Ashby, or company application, then come back.</p>
-        <button class="btn btn-ghost" onClick={onRefresh}>Scan again</button>
+        <div class="toolbar">
+          <button class="btn btn-ghost" onClick={onRefresh}>Scan again</button>
+          <DiagnosticsButton onClick={onDiagnostics} />
+        </div>
       </div>
     )
   }
+  const byExperience = new Map<number, Row[]>()
+  for (const row of rows.filter((item) => item.field.kind === 'experience')) {
+    const index = row.field.experienceIndex ?? 0
+    byExperience.set(index, [...(byExperience.get(index) ?? []), row])
+  }
+  const jobIndexes = [...new Set([
+    ...store.experience.map((_, index) => index),
+    ...byExperience.keys(),
+  ])].sort((a, b) => a - b)
+  const otherRows = rows.filter((row) => row.field.kind !== 'experience')
   return (
     <>
+      {unknownCount ? (
+        <div class="banner support-banner">
+          <p>Carbon could not recognize {unknownCount} field{unknownCount === 1 ? '' : 's'} on this page.</p>
+          <DiagnosticsButton onClick={onDiagnostics} />
+        </div>
+      ) : null}
       <div class="strip">
         <span><strong>{displayName || 'Unnamed'}</strong></span>
         {store.identity.email ? <span>{store.identity.email}</span> : null}
         {store.identity.phone ? <span>{store.identity.phone}</span> : null}
         {store.identity.city ? <span>{store.identity.city}</span> : null}
       </div>
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Field</th>
-            <th>Value</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.field.uid} class={row.status}>
-              <td class="field-label">{row.field.label}</td>
-              <td class="field-value">{row.value === '__resume__' ? store.resume?.name ?? 'Resume' : row.value || '—'}</td>
-              <td>
-                <span class={`chip ${row.status === 'needs-ai' ? 'ai' : row.status}`}>
-                  {row.status === 'needs-ai' ? 'needs AI' : row.status}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {jobIndexes.length ? (
+        <section class="fill-section">
+          <h2>Work experience</h2>
+          <div class="card-list">
+            {jobIndexes.map((index) => {
+              const job = store.experience[index]
+              const jobRows = byExperience.get(index) ?? []
+              const progress = experienceProgress(jobRows)
+              const dates = job
+                ? [job.startDate, job.current ? 'Present' : job.endDate].filter(Boolean).join(' – ')
+                : ''
+              return (
+                <details class="compact-card" key={job?.id ?? `form-job-${index}`}>
+                  <summary>
+                    <span class="card-chevron"><Icon name="chevron" /></span>
+                    <span class="card-heading">
+                      <strong>{job?.title || job?.company || `Experience ${index + 1}`}</strong>
+                      <span>{[job?.company, dates].filter(Boolean).join(' · ') || 'Empty experience slot'}</span>
+                    </span>
+                    <StatusChip label={progress.label} tone={progress.tone} />
+                  </summary>
+                  <div class="compact-card-body">
+                    {jobRows.length ? (
+                      <FieldTable
+                        rows={jobRows}
+                        resumeName={store.resume?.name}
+                        writingUid={writingUid}
+                        onAnswerWithAI={onAnswerWithAI}
+                        onValueChange={onValueChange}
+                      />
+                    ) : (
+                      <p class="card-note">This job does not have a matching experience group on the current form yet. Fill will use the form’s add button when available.</p>
+                    )}
+                  </div>
+                </details>
+              )
+            })}
+          </div>
+        </section>
+      ) : null}
+      {otherRows.length ? (
+        <section class="fill-section">
+          <h2>Other fields</h2>
+          <FieldTable
+            rows={otherRows}
+            resumeName={store.resume?.name}
+            writingUid={writingUid}
+            onAnswerWithAI={onAnswerWithAI}
+            onValueChange={onValueChange}
+          />
+        </section>
+      ) : null}
     </>
+  )
+}
+
+function DiagnosticsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <div class="diagnostics-action">
+      <button class="btn btn-ghost" onClick={onClick}>
+        <Icon name="download" />
+        Export page diagnostics
+      </button>
+      <small>Entered values and common personal data are removed.</small>
+    </div>
+  )
+}
+
+function StatusChip({ label, tone }: { label: string; tone: MatchStatus }) {
+  const className = tone === 'needs-ai' ? 'ai' : tone === 'empty' ? 'status-empty' : tone
+  return <span class={`chip ${className}`}>{label}</span>
+}
+
+function FieldTable({
+  rows,
+  resumeName,
+  writingUid,
+  onAnswerWithAI,
+  onValueChange,
+}: {
+  rows: Row[]
+  resumeName?: string
+  writingUid: string
+  onAnswerWithAI: (uid: string) => void
+  onValueChange: (uid: string, value: string) => void
+}) {
+  return (
+    <table class="table compact-table">
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th>Value</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.field.uid} class={`${row.status} ${isOpenEndedField(row.field) ? 'open-ended' : ''}`}>
+            <td class="field-label">{row.field.label}</td>
+            <td class="field-value">
+              {isOpenEndedField(row.field) ? (
+                <div class="ai-answer">
+                  {row.value ? (
+                    <textarea
+                      aria-label={`Answer for ${row.field.label}`}
+                      value={row.value}
+                      onInput={(event) =>
+                        onValueChange(row.field.uid, (event.target as HTMLTextAreaElement).value)}
+                    />
+                  ) : (
+                    <span class="answer-placeholder">No answer yet</span>
+                  )}
+                  <button
+                    class="btn btn-ai"
+                    disabled={Boolean(writingUid)}
+                    onClick={() => onAnswerWithAI(row.field.uid)}
+                  >
+                    <Icon name="spark" />
+                    {writingUid === row.field.uid
+                      ? 'Writing…'
+                      : row.value
+                        ? 'Rewrite with AI'
+                        : 'Answer with AI'}
+                  </button>
+                </div>
+              ) : row.value === '__resume__' ? resumeName ?? 'Resume' : row.value || '—'}
+            </td>
+            <td class="status-cell">
+              <StatusChip
+                tone={row.status}
+                label={row.status === 'needs-ai' ? 'Needs AI' : row.status === 'mapped' ? 'Ready' : row.status}
+              />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   )
 }
 
@@ -483,23 +763,41 @@ function ProfileTab({
   )
 }
 
-function ExperienceTab({ store, persist }: { store: Store; persist: (s: Store) => Promise<void> }) {
-  const addExp = () =>
+function ExperienceTab({
+  store,
+  rows,
+  persist,
+}: {
+  store: Store
+  rows: Row[]
+  persist: (s: Store) => Promise<void>
+}) {
+  const [openCards, setOpenCards] = useState<string[]>([])
+  const setCardOpen = (id: string, open: boolean) => {
+    setOpenCards((current) => open
+      ? current.includes(id) ? current : [...current, id]
+      : current.filter((item) => item !== id))
+  }
+  const addExp = () => {
+    const job: Experience = {
+      id: uid('exp'), company: '', title: '', location: '', startDate: '', endDate: '', current: false, description: '',
+    }
+    setOpenCards((current) => [...current, job.id])
     void persist({
       ...store,
-      experience: [
-        ...store.experience,
-        { id: uid('exp'), company: '', title: '', location: '', startDate: '', endDate: '', current: false, description: '' },
-      ],
+      experience: [...store.experience, job],
     })
-  const addEdu = () =>
+  }
+  const addEdu = () => {
+    const school: Education = {
+      id: uid('edu'), school: '', degree: '', field: '', location: '', startDate: '', endDate: '', gpa: '',
+    }
+    setOpenCards((current) => [...current, school.id])
     void persist({
       ...store,
-      education: [
-        ...store.education,
-        { id: uid('edu'), school: '', degree: '', field: '', location: '', startDate: '', endDate: '', gpa: '' },
-      ],
+      education: [...store.education, school],
     })
+  }
   return (
     <>
       <div class="toolbar">
@@ -512,43 +810,79 @@ function ExperienceTab({ store, persist }: { store: Store; persist: (s: Store) =
           <p>Add jobs and schools, or import from LinkedIn / a resume. Repeaters on the form map in list order.</p>
         </div>
       ) : null}
-      {store.experience.map((job, i) => (
-        <article class="row-card" key={job.id}>
-          <header>
-            <span>{job.title || job.company || `Role ${i + 1}`}</span>
-            <button class="btn btn-ghost" onClick={() => void persist({ ...store, experience: store.experience.filter((e) => e.id !== job.id) })}>
-              <Icon name="trash" />
-            </button>
-          </header>
-          <ExpForm
-            job={job}
-            onChange={(next) =>
-              void persist({
-                ...store,
-                experience: store.experience.map((e) => (e.id === job.id ? next : e)),
-              })
-            }
-          />
-        </article>
-      ))}
+      <div class="card-list">
+        {store.experience.map((job, i) => {
+          const jobRows = rows.filter(
+            (row) => row.field.kind === 'experience' && (row.field.experienceIndex ?? 0) === i,
+          )
+          const progress = experienceProgress(jobRows)
+          const dates = [job.startDate, job.current ? 'Present' : job.endDate].filter(Boolean).join(' – ')
+          return (
+            <details
+              class="compact-card editor-card"
+              key={job.id}
+              open={openCards.includes(job.id)}
+              onToggle={(event) => setCardOpen(job.id, (event.currentTarget as HTMLDetailsElement).open)}
+            >
+              <summary>
+                <span class="card-chevron"><Icon name="chevron" /></span>
+                <span class="card-heading">
+                  <strong>{job.title || job.company || `Role ${i + 1}`}</strong>
+                  <span>{[job.company, dates].filter(Boolean).join(' · ') || 'Add role details'}</span>
+                </span>
+                <StatusChip label={progress.label} tone={progress.tone} />
+              </summary>
+              <div class="compact-card-body">
+                <div class="card-actions">
+                  <button class="btn btn-ghost" onClick={() => void persist({ ...store, experience: store.experience.filter((e) => e.id !== job.id) })}>
+                    <Icon name="trash" /> Delete role
+                  </button>
+                </div>
+                <ExpForm
+                  job={job}
+                  onChange={(next) =>
+                    void persist({
+                      ...store,
+                      experience: store.experience.map((e) => (e.id === job.id ? next : e)),
+                    })
+                  }
+                />
+              </div>
+            </details>
+          )
+        })}
+      </div>
       {store.education.map((edu, i) => (
-        <article class="row-card" key={edu.id}>
-          <header>
-            <span>{edu.school || `School ${i + 1}`}</span>
-            <button class="btn btn-ghost" onClick={() => void persist({ ...store, education: store.education.filter((e) => e.id !== edu.id) })}>
-              <Icon name="trash" />
-            </button>
-          </header>
-          <EduForm
-            edu={edu}
-            onChange={(next) =>
-              void persist({
-                ...store,
-                education: store.education.map((e) => (e.id === edu.id ? next : e)),
-              })
-            }
-          />
-        </article>
+        <details
+          class="compact-card editor-card"
+          key={edu.id}
+          open={openCards.includes(edu.id)}
+          onToggle={(event) => setCardOpen(edu.id, (event.currentTarget as HTMLDetailsElement).open)}
+        >
+          <summary>
+            <span class="card-chevron"><Icon name="chevron" /></span>
+            <span class="card-heading">
+              <strong>{edu.school || `School ${i + 1}`}</strong>
+              <span>{[edu.degree, edu.field, edu.endDate].filter(Boolean).join(' · ') || 'Add education details'}</span>
+            </span>
+          </summary>
+          <div class="compact-card-body">
+            <div class="card-actions">
+              <button class="btn btn-ghost" onClick={() => void persist({ ...store, education: store.education.filter((e) => e.id !== edu.id) })}>
+                <Icon name="trash" /> Delete school
+              </button>
+            </div>
+            <EduForm
+              edu={edu}
+              onChange={(next) =>
+                void persist({
+                  ...store,
+                  education: store.education.map((e) => (e.id === edu.id ? next : e)),
+                })
+              }
+            />
+          </div>
+        </details>
       ))}
       <Answers store={store} persist={persist} />
     </>

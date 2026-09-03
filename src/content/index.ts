@@ -1,10 +1,15 @@
 import { detectFields } from './detect'
 import { fillFields } from './fill'
 import { importLinkedIn } from './linkedin'
+import { expandRepeaters } from './repeaters'
+import { collectPageDiagnostics } from './diagnostics'
 import type { Msg } from '../lib/messages'
 import type { FillRequest } from '../lib/types'
 
-chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
+const LISTENER_KEY = '__carbonContentListener_v1__'
+const contentGlobal = globalThis as typeof globalThis & Record<string, unknown>
+
+function handleMessage(msg: Msg, sendResponse: (response?: unknown) => void): boolean {
   void (async () => {
     try {
       if (msg.type === 'DETECT') {
@@ -20,9 +25,27 @@ chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
         sendResponse(await importLinkedIn())
         return
       }
+      if (msg.type === 'EXPAND_REPEATERS') {
+        sendResponse(await expandRepeaters(msg.payload.experience, msg.payload.education))
+        return
+      }
+      if (msg.type === 'COLLECT_PAGE_DIAGNOSTICS') {
+        sendResponse(collectPageDiagnostics())
+        return
+      }
     } catch (err) {
       sendResponse({ error: err instanceof Error ? err.message : String(err) })
     }
   })()
   return true
-})
+}
+
+// The manifest loader and the synchronous recovery bundle can briefly overlap
+// on a slow page. Install one listener per frame so a fill action never runs
+// twice when that race occurs.
+if (!contentGlobal[LISTENER_KEY]) {
+  contentGlobal[LISTENER_KEY] = true
+  chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) =>
+    handleMessage(msg, sendResponse),
+  )
+}

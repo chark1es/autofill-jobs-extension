@@ -9,7 +9,7 @@ export type FieldKind =
   | 'file'
   | 'unknown'
 
-export type MatchStatus = 'mapped' | 'needs-ai' | 'empty' | 'skipped' | 'writing' | 'failed'
+export type MatchStatus = 'mapped' | 'needs-ai' | 'empty' | 'skipped' | 'writing' | 'filled' | 'failed'
 
 export interface Identity {
   firstName: string
@@ -136,6 +136,7 @@ export interface FillPlanItem {
   uid: string
   value: string
   source: 'heuristic' | 'ai' | 'resume-file'
+  suggestionHints?: string[]
 }
 
 export interface FillRequest {
@@ -145,7 +146,44 @@ export interface FillRequest {
 
 export interface FillResult {
   filled: number
+  filledUids: string[]
   failed: Array<{ uid: string; reason: string }>
+}
+
+export interface ExpandRepeatersResult {
+  experienceAdded: number
+  educationAdded: number
+}
+
+export interface PageDiagnosticElement {
+  tag: string
+  label: string
+  path: string
+  visible: boolean
+  attributes: Record<string, string>
+}
+
+export interface PageDiagnostics {
+  version: 1
+  capturedAt: string
+  page: {
+    url: string
+    title: string
+    host: string
+    language: string
+    userAgent: string
+  }
+  frameworks: string[]
+  customElements: string[]
+  fields: PageDiagnosticElement[]
+  buttons: PageDiagnosticElement[]
+  forms: Array<{
+    path: string
+    attributes: Record<string, string>
+    fieldCount: number
+  }>
+  sanitizedHtml: string
+  htmlTruncated: boolean
 }
 
 export const EMPTY_IDENTITY: Identity = {

@@ -12,7 +12,7 @@ export async function completeWithOpenRouter(opts: {
   pageTitle: string
 }): Promise<string> {
   if (!opts.key) throw new Error('Add an OpenRouter key in Settings.')
-  const system = `You fill job application questions as the candidate. Use only the dossier. Be specific, first person, no markdown, no preamble. If options are provided, reply with the exact option text. Keep answers under 180 words unless the question is a cover letter (then under 350).`
+  const system = `You answer job application questions as the candidate. Tailor every answer to the exact question using the most relevant evidence from the candidate dossier. Never invent facts, employers, skills, metrics, or experiences. Write naturally in first person, with specific supporting details when available. Return only the finished answer: no markdown, headings, notes, or preamble. If options are provided, reply with the exact option text. Keep answers concise and under 180 words unless the question requests a cover letter (then under 350).`
   const user = [
     `Application: ${opts.pageTitle}`,
     `Dossier:\n${profileContext(opts.store)}`,

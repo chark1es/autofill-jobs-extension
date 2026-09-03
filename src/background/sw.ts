@@ -4,6 +4,7 @@ import {
   findSavedAnswer,
   heuristicValue,
   needsAI,
+  suggestionHints,
 } from '../lib/match'
 import { sendTabOrInject, type Msg } from '../lib/messages'
 import type { DetectResult, FillPlanItem, FillRequest, FillResult, Store } from '../lib/types'
@@ -33,7 +34,7 @@ async function planFill(store: Store, detect: DetectResult): Promise<FillPlanIte
           store,
           pageTitle: detect.title,
         })
-        items.push({ uid: field.uid, value, source: 'ai' })
+        items.push({ uid: field.uid, value, source: 'ai', suggestionHints: suggestionHints(field, store) })
         continue
       } catch {
         // leave empty; popup surfaces OpenRouter errors on explicit AI calls
@@ -44,6 +45,7 @@ async function planFill(store: Store, detect: DetectResult): Promise<FillPlanIte
         uid: field.uid,
         value,
         source: field.kind === 'file' ? 'resume-file' : 'heuristic',
+        suggestionHints: suggestionHints(field, store),
       })
     }
   }
@@ -77,8 +79,12 @@ chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
       }
       if (msg.type === 'FILL_ACTIVE_TAB') {
         const tab = await activeTab()
-        const detect = await tabMsg<DetectResult>(tab.id!, { type: 'DETECT' })
         const store = await loadStore()
+        await tabMsg(tab.id!, {
+          type: 'EXPAND_REPEATERS',
+          payload: { experience: store.experience.length, education: store.education.length },
+        })
+        const detect = await tabMsg<DetectResult>(tab.id!, { type: 'DETECT' })
         const items = await planFill(store, detect)
         const resume = store.resume
           ? { name: store.resume.name, mime: store.resume.mime, dataBase64: store.resume.dataBase64 }
@@ -100,8 +106,12 @@ chrome.commands.onCommand.addListener((command) => {
   if (command !== 'fill-form') return
   void (async () => {
     const tab = await activeTab()
-    const detect = await tabMsg<DetectResult>(tab.id!, { type: 'DETECT' })
     const store = await loadStore()
+    await tabMsg(tab.id!, {
+      type: 'EXPAND_REPEATERS',
+      payload: { experience: store.experience.length, education: store.education.length },
+    })
+    const detect = await tabMsg<DetectResult>(tab.id!, { type: 'DETECT' })
     const items = await planFill(store, detect)
     const resume = store.resume
       ? { name: store.resume.name, mime: store.resume.mime, dataBase64: store.resume.dataBase64 }

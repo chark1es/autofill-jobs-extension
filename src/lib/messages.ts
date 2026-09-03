@@ -1,14 +1,19 @@
 import type {
   DetectResult,
+  ExpandRepeatersResult,
   FillRequest,
   FillResult,
+  PageDiagnostics,
   Store,
 } from './types'
+import injectedContentScript from '../content/recovery.ts?script&iife'
 
 export type Msg =
   | { type: 'DETECT' }
   | { type: 'FILL'; payload: FillRequest }
   | { type: 'IMPORT_LINKEDIN' }
+  | { type: 'EXPAND_REPEATERS'; payload: { experience: number; education: number } }
+  | { type: 'COLLECT_PAGE_DIAGNOSTICS' }
   | { type: 'AI_COMPLETE'; payload: { question: string; options: string[]; context: string } }
   | { type: 'GET_STORE' }
   | { type: 'SAVE_STORE'; payload: Store }
@@ -18,6 +23,8 @@ export type MsgResult = {
   DETECT: DetectResult
   FILL: FillResult
   IMPORT_LINKEDIN: Partial<Store>
+  EXPAND_REPEATERS: ExpandRepeatersResult
+  COLLECT_PAGE_DIAGNOSTICS: PageDiagnostics
   AI_COMPLETE: { text: string }
   GET_STORE: Store
   SAVE_STORE: { ok: true }
@@ -38,9 +45,7 @@ export function sendTab<T extends Msg['type']>(
 }
 
 export function contentScriptFiles(): string[] {
-  const files = chrome.runtime.getManifest().content_scripts?.[0]?.js
-  if (!files?.length) throw new Error('No content script in the manifest.')
-  return files
+  return [injectedContentScript]
 }
 
 export async function injectContent(tabId: number): Promise<void> {
