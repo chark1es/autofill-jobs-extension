@@ -40,6 +40,11 @@ body.options, body.options #root {
   min-height: 100vh;
 }
 
+body.sidepanel, body.sidepanel #root {
+  width: 100%;
+  height: 100vh;
+}
+
 ::selection { background: #2f6fed33; }
 :focus-visible {
   outline: 2px solid var(--fill);
@@ -89,6 +94,53 @@ body.options .app {
   color: var(--muted);
   font-size: 12px;
 }
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.enable-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.enable-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.enable-switch span {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: #c9c9c6;
+  transition: background 140ms ease;
+}
+
+.enable-switch span::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 140ms ease;
+}
+
+.enable-switch input:checked + span { background: var(--mapped); }
+.enable-switch input:checked + span::after { transform: translateX(12px); }
+.enable-switch input:focus-visible + span { outline: 2px solid var(--fill); outline-offset: 2px; }
+.enable-switch b { min-width: 18px; font-weight: 650; }
 
 .btn {
   appearance: none;
@@ -207,6 +259,15 @@ body.options .app {
   max-width: 140px;
 }
 
+.field-label small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
 .field-value {
   color: var(--muted);
   word-break: break-word;
@@ -235,6 +296,12 @@ body.options .app {
 .answer-placeholder {
   color: var(--muted);
   font-style: italic;
+}
+
+.failure-reason {
+  color: var(--danger);
+  font-size: 10px;
+  line-height: 1.3;
 }
 
 .btn-ai {
@@ -295,6 +362,27 @@ body.options .app {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.section-heading h2 { margin-bottom: 0; }
+.section-heading span { color: var(--muted); font-size: 11px; }
+
+body.sidepanel .app { min-height: 100vh; }
+body.sidepanel .main { padding-left: 12px; padding-right: 12px; }
+body.sidepanel .header { padding-left: 12px; padding-right: 12px; }
+
+@media (max-width: 360px) {
+  .header { flex-wrap: wrap; }
+  .header-actions { width: 100%; justify-content: space-between; }
+  .table { display: block; overflow-x: auto; }
 }
 
 .card-list {

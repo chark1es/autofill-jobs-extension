@@ -88,6 +88,7 @@ export interface ResumeFile {
 }
 
 export interface Settings {
+  enabled: boolean
   openrouterKey: string
   openrouterModel: string
   fillUnmatchedWithAI: boolean
@@ -227,6 +228,7 @@ export const EMPTY_IDENTITY: Identity = {
 }
 
 export const EMPTY_SETTINGS: Settings = {
+  enabled: true,
   openrouterKey: '',
   openrouterModel: 'deepseek/deepseek-v4-flash-0731',
   fillUnmatchedWithAI: true,

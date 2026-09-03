@@ -18,6 +18,7 @@ export type Msg =
   | { type: 'GET_STORE' }
   | { type: 'SAVE_STORE'; payload: Store }
   | { type: 'FILL_ACTIVE_TAB' }
+  | { type: 'OPEN_SIDE_PANEL' }
 
 export type MsgResult = {
   DETECT: DetectResult
@@ -29,6 +30,7 @@ export type MsgResult = {
   GET_STORE: Store
   SAVE_STORE: { ok: true }
   FILL_ACTIVE_TAB: FillResult & { detect: DetectResult }
+  OPEN_SIDE_PANEL: { ok: true } | { ok: false; error: string }
 }
 
 export function send<T extends Msg['type']>(

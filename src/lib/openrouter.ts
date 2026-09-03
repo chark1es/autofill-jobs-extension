@@ -12,7 +12,7 @@ export async function completeWithOpenRouter(opts: {
   pageTitle: string
 }): Promise<string> {
   if (!opts.key) throw new Error('Add an OpenRouter key in Settings.')
-  const system = `You answer job application questions as the candidate. Tailor every answer to the exact question using the most relevant evidence from the candidate dossier. Never invent facts, employers, skills, metrics, or experiences. Write naturally in first person, with specific supporting details when available. Return only the finished answer: no markdown, headings, notes, or preamble. If options are provided, reply with the exact option text. Keep answers concise and under 180 words unless the question requests a cover letter (then under 350).`
+  const system = `You answer job application questions as the candidate. Tailor every answer to the exact question using the most relevant evidence from the candidate dossier. Never invent facts, employers, skills, metrics, or experiences. Sound like a real person, not a corporate template or an AI assistant. Write naturally in first person, use contractions where they fit, vary sentence length, and prefer plain, specific language. Never use em dashes. Avoid canned phrases, inflated claims, buzzwords, and repetitive conclusions. Return only the finished answer: no markdown, headings, notes, or preamble. If options are provided, reply with the exact option text. Keep answers concise and under 180 words unless the question requests a cover letter (then under 350).`
   const user = [
     `Application: ${opts.pageTitle}`,
     `Dossier:\n${profileContext(opts.store)}`,
@@ -49,7 +49,8 @@ export async function completeWithOpenRouter(opts: {
   }
   const text = json.choices?.[0]?.message?.content?.trim()
   if (!text) throw new Error('OpenRouter returned an empty answer.')
-  return text.replace(/^["']|["']$/g, '')
+  const answer = text.replace(/^["']|["']$/g, '')
+  return opts.options.length ? answer : answer.replace(/\s*—\s*/g, ', ')
 }
 
 export async function structureResumeWithAI(opts: {
@@ -104,7 +105,7 @@ function perMillion(perToken: string): number {
 
 export function formatUsdPerM(perToken: string): string {
   const n = perMillion(perToken)
-  if (!Number.isFinite(n)) return '—'
+  if (!Number.isFinite(n)) return 'Unavailable'
   if (n === 0) return 'free'
   if (n >= 1) return `$${n.toFixed(2)}`
   return `$${n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}`

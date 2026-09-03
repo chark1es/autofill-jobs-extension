@@ -9,6 +9,8 @@ import {
 import { sendTabOrInject, type Msg } from '../lib/messages'
 import type { DetectResult, FillPlanItem, FillRequest, FillResult, Store } from '../lib/types'
 
+const SIDE_PANEL_PATH = 'src/sidepanel/index.html'
+
 async function activeTab(): Promise<chrome.tabs.Tab> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   if (!tab?.id) throw new Error('No active tab.')
@@ -24,7 +26,7 @@ async function planFill(store: Store, detect: DetectResult): Promise<FillPlanIte
   for (const field of detect.fields) {
     const saved = findSavedAnswer(field.label, store)
     let value = saved || heuristicValue(field, store)
-    if (!value && store.settings.fillUnmatchedWithAI && needsAI(field, value) && store.settings.openrouterKey) {
+    if (!value && needsAI(field, value) && store.settings.openrouterKey) {
       try {
         value = await completeWithOpenRouter({
           key: store.settings.openrouterKey,
@@ -52,7 +54,44 @@ async function planFill(store: Store, detect: DetectResult): Promise<FillPlanIte
   return items
 }
 
-chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
+async function syncEnabledState(): Promise<void> {
+  const { settings } = await loadStore()
+  await chrome.action.setBadgeText({ text: settings.enabled ? '' : 'OFF' })
+  await chrome.action.setBadgeBackgroundColor({ color: '#5c5c5c' })
+  await chrome.action.setTitle({
+    title: settings.enabled ? 'Carbon is enabled' : 'Carbon is disabled',
+  })
+  await chrome.sidePanel.setOptions({
+    path: SIDE_PANEL_PATH,
+    enabled: settings.enabled,
+  })
+}
+
+chrome.runtime.onInstalled.addListener(() => void syncEnabledState())
+chrome.runtime.onStartup.addListener(() => void syncEnabledState())
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes['carbon.store.v1']) void syncEnabledState()
+})
+void syncEnabledState()
+
+chrome.runtime.onMessage.addListener((msg: Msg, sender, sendResponse) => {
+  if (msg.type === 'OPEN_SIDE_PANEL') {
+    if (!sender.tab?.id) {
+      sendResponse({ ok: false, error: 'Could not find this browser tab.' })
+      return false
+    }
+    // Chrome requires open() to be invoked synchronously from the user-click
+    // message. Any awaited work before this call consumes the user gesture.
+    chrome.sidePanel.open({ tabId: sender.tab.id }).then(
+      () => sendResponse({ ok: true }),
+      (error: unknown) => sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    )
+    return true
+  }
+
   void (async () => {
     try {
       if (msg.type === 'GET_STORE') {
@@ -80,6 +119,7 @@ chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
       if (msg.type === 'FILL_ACTIVE_TAB') {
         const tab = await activeTab()
         const store = await loadStore()
+        if (!store.settings.enabled) throw new Error('Carbon is disabled.')
         await tabMsg(tab.id!, {
           type: 'EXPAND_REPEATERS',
           payload: { experience: store.experience.length, education: store.education.length },
@@ -107,6 +147,7 @@ chrome.commands.onCommand.addListener((command) => {
   void (async () => {
     const tab = await activeTab()
     const store = await loadStore()
+    if (!store.settings.enabled) return
     await tabMsg(tab.id!, {
       type: 'EXPAND_REPEATERS',
       payload: { experience: store.experience.length, education: store.education.length },

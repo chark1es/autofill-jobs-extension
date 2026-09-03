@@ -15,6 +15,7 @@ interface Row {
   value: string
   status: MatchStatus
   source: 'heuristic' | 'ai'
+  failureReason?: string
 }
 
 async function currentTab(): Promise<chrome.tabs.Tab | null> {
@@ -32,12 +33,13 @@ function valuesMatch(current: string, planned: string): boolean {
 function rowsFor(detect: DetectResult, store: Store): Row[] {
   return detect.fields.map((field) => {
     const saved = findSavedAnswer(field.label, store)
-    const value = saved || heuristicValue(field, store)
-    const status: MatchStatus = valuesMatch(field.currentValue, value)
+    const plannedValue = saved || heuristicValue(field, store)
+    const value = plannedValue || field.currentValue
+    const status: MatchStatus = field.currentValue && (!plannedValue || valuesMatch(field.currentValue, plannedValue))
       ? 'filled'
-      : value
+      : plannedValue
         ? 'mapped'
-        : needsAI(field, value)
+        : needsAI(field, plannedValue)
           ? 'needs-ai'
           : 'empty'
     return { field, value, status, source: 'heuristic' }
@@ -79,7 +81,7 @@ async function ensureDetect(tabId: number): Promise<DetectResult> {
   return sendTabOrInject(tabId, { type: 'DETECT' })
 }
 
-export function App({ mode }: { mode: 'popup' | 'options' }) {
+export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
   const [store, setStore] = useState<Store>(EMPTY_STORE)
   const [tab, setTab] = useState<Tab>('fill')
   const [detect, setDetect] = useState<DetectResult | null>(null)
@@ -127,6 +129,20 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
   }, [refreshDetect])
 
   useEffect(() => {
+    if (mode !== 'sidepanel' || typeof chrome === 'undefined' || !chrome.tabs) return
+    const refresh = () => void refreshDetect()
+    const updated = (_tabId: number, change: chrome.tabs.TabChangeInfo, changedTab: chrome.tabs.Tab) => {
+      if (changedTab.active && (change.url || change.status === 'complete')) refresh()
+    }
+    chrome.tabs.onActivated.addListener(refresh)
+    chrome.tabs.onUpdated.addListener(updated)
+    return () => {
+      chrome.tabs.onActivated.removeListener(refresh)
+      chrome.tabs.onUpdated.removeListener(updated)
+    }
+  }, [mode, refreshDetect])
+
+  useEffect(() => {
     if (!detect) {
       setRows([])
       return
@@ -145,6 +161,7 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
         ...row,
         value,
         status: value ? 'mapped' : needsAI(row.field, value) ? 'needs-ai' : 'empty',
+        failureReason: undefined,
       }
     }))
   }
@@ -152,6 +169,10 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
   async function answerWithAI(uid: string) {
     const row = rows.find((candidate) => candidate.field.uid === uid)
     if (!row) return
+    if (!store.settings.enabled) {
+      setError('Turn Carbon on before generating an answer.')
+      return
+    }
     if (!store.settings.openrouterKey) {
       setError('Add an OpenRouter key in Settings before asking AI to write an answer.')
       return
@@ -176,17 +197,42 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
         store,
         pageTitle: detect?.title ?? '',
       })
+      const active = await currentTab()
+      if (!active?.id) throw new Error('No active tab.')
+      const result = await sendTabOrInject(active.id, {
+        type: 'FILL',
+        payload: {
+          items: [{
+            uid,
+            value,
+            source: 'ai',
+            suggestionHints: suggestionHints(row.field, store),
+          }],
+        },
+      })
+      const failure = result.failed.find((item) => item.uid === uid)
+      const filled = result.filledUids.includes(uid)
       setRows((current) => current.map((candidate) =>
         candidate.field.uid === uid
-          ? { ...candidate, value, status: 'mapped', source: 'ai' }
+          ? {
+              ...candidate,
+              value,
+              status: filled ? 'filled' : 'failed',
+              source: 'ai',
+              failureReason: failure?.reason ?? (filled ? undefined : "The page didn't accept this answer."),
+            }
           : candidate,
       ))
-      setNotice('Tailored answer is ready. Review it, then press Fill.')
+      if (!filled) throw new Error(failure?.reason ?? "The page didn't accept this answer.")
+      setNotice('Generated and filled the answer. You can still review or edit it.')
     } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not write the answer.'
       setRows((current) => current.map((candidate) =>
-        candidate.field.uid === uid ? { ...candidate, status: 'failed' } : candidate,
+        candidate.field.uid === uid
+          ? { ...candidate, status: 'failed', failureReason: message }
+          : candidate,
       ))
-      setError(e instanceof Error ? e.message : 'Could not write the answer.')
+      setError(message)
     } finally {
       setWritingUid('')
       setBusy('')
@@ -195,6 +241,10 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
 
   async function fillNow() {
     setError('')
+    if (!store.settings.enabled) {
+      setError('Turn Carbon on before filling this page.')
+      return
+    }
     setBusy('Filling')
     const t = await currentTab()
     if (!t?.id) {
@@ -228,8 +278,15 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
       for (let i = 0; i < nextRows.length; i++) {
         const row = nextRows[i]
         if (row.value) continue
-        if (row.status !== 'needs-ai' || !store.settings.fillUnmatchedWithAI) continue
-        if (!store.settings.openrouterKey) continue
+        if (row.status !== 'needs-ai') continue
+        if (!store.settings.openrouterKey) {
+          nextRows[i] = {
+            ...row,
+            status: 'failed',
+            failureReason: 'Add an OpenRouter key in Settings to generate this answer.',
+          }
+          continue
+        }
         nextRows[i] = { ...row, status: 'writing' }
         setRows([...nextRows])
         try {
@@ -246,6 +303,7 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
           nextRows[i] = {
             ...row,
             status: 'failed',
+            failureReason: e instanceof Error ? e.message : 'OpenRouter failed.',
           }
           setError(e instanceof Error ? e.message : 'OpenRouter failed.')
         }
@@ -264,10 +322,13 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
         : undefined
       const result = await sendTabOrInject(t.id, { type: 'FILL', payload: { items, resume } })
       const filled = new Set(result.filledUids ?? [])
-      const failed = new Set(result.failed.map((item) => item.uid))
+      const failed = new Map(result.failed.map((item) => [item.uid, item.reason]))
       setRows(nextRows.map((row) => ({
         ...row,
-        status: filled.has(row.field.uid) ? 'filled' : failed.has(row.field.uid) ? 'failed' : row.status,
+        status: filled.has(row.field.uid) ? 'filled' : 'failed',
+        failureReason: filled.has(row.field.uid)
+          ? undefined
+          : failed.get(row.field.uid) ?? row.failureReason ?? (row.value ? "The page didn't accept this value." : 'No profile value or AI answer was available.'),
       })))
       setNotice(`Wrote ${result.filled} fields${result.failed.length ? ` · ${result.failed.length} failed` : ''}.`)
     } catch (e) {
@@ -338,7 +399,9 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
         <div>
           <h1>Candidate file</h1>
           <p class="meta status">
-            {busy
+            {!store.settings.enabled
+              ? 'Carbon is off'
+              : busy
               ? busy
               : detect
                 ? `${mapped} mapped · ${aiCount} need AI · ${detect.host.replace(/^www\./, '')}`
@@ -347,10 +410,24 @@ export function App({ mode }: { mode: 'popup' | 'options' }) {
                   : 'Open an application form'}
           </p>
         </div>
-        <button class="btn btn-primary" disabled={!!busy || rows.length === 0} onClick={() => void fillNow()}>
-          <Icon name="fill" />
-          Fill
-        </button>
+        <div class="header-actions">
+          <label class="enable-switch" title={store.settings.enabled ? 'Disable Carbon' : 'Enable Carbon'}>
+            <input
+              type="checkbox"
+              checked={store.settings.enabled}
+              onChange={(event) => void persist({
+                ...store,
+                settings: { ...store.settings, enabled: (event.target as HTMLInputElement).checked },
+              })}
+            />
+            <span aria-hidden="true" />
+            <b>{store.settings.enabled ? 'On' : 'Off'}</b>
+          </label>
+          <button class="btn btn-primary" disabled={!store.settings.enabled || !!busy || rows.length === 0} onClick={() => void fillNow()}>
+            <Icon name="fill" />
+            Fill
+          </button>
+        </div>
       </header>
       <div class="main">
         {error ? <div class="banner error">{error}</div> : null}
@@ -462,16 +539,8 @@ function FillTab({
       </div>
     )
   }
-  const byExperience = new Map<number, Row[]>()
-  for (const row of rows.filter((item) => item.field.kind === 'experience')) {
-    const index = row.field.experienceIndex ?? 0
-    byExperience.set(index, [...(byExperience.get(index) ?? []), row])
-  }
-  const jobIndexes = [...new Set([
-    ...store.experience.map((_, index) => index),
-    ...byExperience.keys(),
-  ])].sort((a, b) => a - b)
-  const otherRows = rows.filter((row) => row.field.kind !== 'experience')
+  const filledCount = rows.filter((row) => row.status === 'filled').length
+  const failedCount = rows.filter((row) => row.status === 'failed').length
   return (
     <>
       {unknownCount ? (
@@ -486,58 +555,19 @@ function FillTab({
         {store.identity.phone ? <span>{store.identity.phone}</span> : null}
         {store.identity.city ? <span>{store.identity.city}</span> : null}
       </div>
-      {jobIndexes.length ? (
-        <section class="fill-section">
-          <h2>Work experience</h2>
-          <div class="card-list">
-            {jobIndexes.map((index) => {
-              const job = store.experience[index]
-              const jobRows = byExperience.get(index) ?? []
-              const progress = experienceProgress(jobRows)
-              const dates = job
-                ? [job.startDate, job.current ? 'Present' : job.endDate].filter(Boolean).join(' – ')
-                : ''
-              return (
-                <details class="compact-card" key={job?.id ?? `form-job-${index}`}>
-                  <summary>
-                    <span class="card-chevron"><Icon name="chevron" /></span>
-                    <span class="card-heading">
-                      <strong>{job?.title || job?.company || `Experience ${index + 1}`}</strong>
-                      <span>{[job?.company, dates].filter(Boolean).join(' · ') || 'Empty experience slot'}</span>
-                    </span>
-                    <StatusChip label={progress.label} tone={progress.tone} />
-                  </summary>
-                  <div class="compact-card-body">
-                    {jobRows.length ? (
-                      <FieldTable
-                        rows={jobRows}
-                        resumeName={store.resume?.name}
-                        writingUid={writingUid}
-                        onAnswerWithAI={onAnswerWithAI}
-                        onValueChange={onValueChange}
-                      />
-                    ) : (
-                      <p class="card-note">This job does not have a matching experience group on the current form yet. Fill will use the form’s add button when available.</p>
-                    )}
-                  </div>
-                </details>
-              )
-            })}
-          </div>
-        </section>
-      ) : null}
-      {otherRows.length ? (
-        <section class="fill-section">
-          <h2>Other fields</h2>
-          <FieldTable
-            rows={otherRows}
-            resumeName={store.resume?.name}
-            writingUid={writingUid}
-            onAnswerWithAI={onAnswerWithAI}
-            onValueChange={onValueChange}
-          />
-        </section>
-      ) : null}
+      <section class="fill-section">
+        <div class="section-heading">
+          <h2>Detected inputs</h2>
+          <span>{rows.length} found{filledCount ? `, ${filledCount} filled` : ''}{failedCount ? `, ${failedCount} not filled` : ''}</span>
+        </div>
+        <FieldTable
+          rows={rows}
+          resumeName={store.resume?.name}
+          writingUid={writingUid}
+          onAnswerWithAI={onAnswerWithAI}
+          onValueChange={onValueChange}
+        />
+      </section>
     </>
   )
 }
@@ -582,13 +612,27 @@ function FieldTable({
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
-          <tr key={row.field.uid} class={`${row.status} ${isOpenEndedField(row.field) ? 'open-ended' : ''}`}>
-            <td class="field-label">{row.field.label}</td>
-            <td class="field-value">
-              {isOpenEndedField(row.field) ? (
-                <div class="ai-answer">
-                  {row.value ? (
+        {rows.map((row) => {
+          const openEnded = isOpenEndedField(row.field)
+          const canGenerate = openEnded || row.status === 'needs-ai' || row.source === 'ai'
+          const statusLabel: Record<MatchStatus, string> = {
+            mapped: 'Ready',
+            'needs-ai': 'Needs AI',
+            empty: 'No value',
+            skipped: 'Skipped',
+            writing: 'Writing',
+            filled: 'Filled',
+            failed: 'Not filled',
+          }
+          return (
+            <tr key={row.field.uid} class={`${row.status} ${openEnded ? 'open-ended' : ''}`}>
+              <td class="field-label">
+                {row.field.label}
+                {row.field.required ? <small>Required</small> : null}
+              </td>
+              <td class="field-value">
+                <div class={canGenerate ? 'ai-answer' : undefined}>
+                  {openEnded && row.value ? (
                     <textarea
                       aria-label={`Answer for ${row.field.label}`}
                       value={row.value}
@@ -596,31 +640,29 @@ function FieldTable({
                         onValueChange(row.field.uid, (event.target as HTMLTextAreaElement).value)}
                     />
                   ) : (
-                    <span class="answer-placeholder">No answer yet</span>
+                    <span class={!row.value ? 'answer-placeholder' : undefined}>
+                      {row.value === '__resume__' ? resumeName ?? 'Resume' : row.value || 'No value found'}
+                    </span>
                   )}
-                  <button
-                    class="btn btn-ai"
-                    disabled={Boolean(writingUid)}
-                    onClick={() => onAnswerWithAI(row.field.uid)}
-                  >
-                    <Icon name="spark" />
-                    {writingUid === row.field.uid
-                      ? 'Writing…'
-                      : row.value
-                        ? 'Rewrite with AI'
-                        : 'Answer with AI'}
-                  </button>
+                  {canGenerate ? (
+                    <button
+                      class="btn btn-ai"
+                      disabled={Boolean(writingUid)}
+                      onClick={() => onAnswerWithAI(row.field.uid)}
+                    >
+                      <Icon name="spark" />
+                      {writingUid === row.field.uid ? 'Generating…' : row.value ? 'Regenerate' : 'Generate'}
+                    </button>
+                  ) : null}
+                  {row.failureReason ? <small class="failure-reason">{row.failureReason}</small> : null}
                 </div>
-              ) : row.value === '__resume__' ? resumeName ?? 'Resume' : row.value || '—'}
-            </td>
-            <td class="status-cell">
-              <StatusChip
-                tone={row.status}
-                label={row.status === 'needs-ai' ? 'Needs AI' : row.status === 'mapped' ? 'Ready' : row.status}
-              />
-            </td>
-          </tr>
-        ))}
+              </td>
+              <td class="status-cell">
+                <StatusChip tone={row.status} label={statusLabel[row.status]} />
+              </td>
+            </tr>
+          )
+        })}
       </tbody>
     </table>
   )
@@ -650,6 +692,80 @@ function Field({
     </label>
   )
 }
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: string[]
+  onChange: (value: string) => void
+}) {
+  return (
+    <label class="field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange((event.target as HTMLSelectElement).value)}>
+        <option value="">Select</option>
+        {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    </label>
+  )
+}
+
+const CITIZENSHIP_OPTIONS = [
+  'U.S. citizen',
+  'U.S. national',
+  'Permanent resident',
+  'Non-U.S. citizen',
+  'Prefer not to answer',
+]
+const VISA_OPTIONS = [
+  'No visa required',
+  'H-1B',
+  'F-1 OPT/CPT',
+  'TN',
+  'O-1',
+  'E-3',
+  'L-1',
+  'J-1',
+  'Other work visa',
+  'Sponsorship required',
+  'Prefer not to answer',
+]
+const EMPLOYMENT_OPTIONS = ['Full-time', 'Part-time', 'Contract', 'Temporary', 'Internship']
+const WORK_SETTING_OPTIONS = ['Remote', 'Hybrid', 'On-site', 'No preference']
+const GENDER_OPTIONS = [
+  'Woman',
+  'Man',
+  'Non-binary',
+  'Self-describe',
+  'Prefer not to answer',
+]
+const ETHNICITY_OPTIONS = [
+  'American Indian or Alaska Native',
+  'Asian',
+  'Black or African American',
+  'Hispanic or Latino',
+  'Middle Eastern or North African',
+  'Native Hawaiian or Other Pacific Islander',
+  'White',
+  'Two or more races',
+  'Prefer not to answer',
+]
+const VETERAN_OPTIONS = [
+  'I am not a protected veteran',
+  'I identify as one or more classifications of a protected veteran',
+  'I am a protected veteran',
+  'Prefer not to answer',
+]
+const DISABILITY_OPTIONS = [
+  'Yes, I have a disability or have had one in the past',
+  'No, I do not have a disability and have not had one in the past',
+  'Prefer not to answer',
+]
 
 function ProfileTab({
   store,
@@ -692,7 +808,7 @@ function ProfileTab({
         <label class="field">
           <span>Work authorized</span>
           <select value={id.workAuthorized} onChange={(e) => set('workAuthorized', (e.target as HTMLSelectElement).value)}>
-            <option value="">—</option>
+            <option value="">Select</option>
             <option value="yes">Yes</option>
             <option value="no">No</option>
           </select>
@@ -700,7 +816,7 @@ function ProfileTab({
         <label class="field">
           <span>Needs sponsorship</span>
           <select value={id.needsSponsorship} onChange={(e) => set('needsSponsorship', (e.target as HTMLSelectElement).value)}>
-            <option value="">—</option>
+            <option value="">Select</option>
             <option value="yes">Yes</option>
             <option value="no">No</option>
           </select>
@@ -708,7 +824,7 @@ function ProfileTab({
         <label class="field">
           <span>Willing to relocate</span>
           <select value={id.willingToRelocate} onChange={(e) => set('willingToRelocate', (e.target as HTMLSelectElement).value)}>
-            <option value="">—</option>
+            <option value="">Select</option>
             <option value="yes">Yes</option>
             <option value="no">No</option>
           </select>
@@ -716,21 +832,21 @@ function ProfileTab({
         <label class="field">
           <span>Willing to travel</span>
           <select value={id.willingToTravel} onChange={(e) => set('willingToTravel', (e.target as HTMLSelectElement).value)}>
-            <option value="">—</option>
+            <option value="">Select</option>
             <option value="yes">Yes</option>
             <option value="no">No</option>
           </select>
         </label>
-        <Field label="Citizenship" value={id.citizenship} onInput={(v) => set('citizenship', v)} />
-        <Field label="Visa status" value={id.visaStatus} onInput={(v) => set('visaStatus', v)} />
-        <Field label="Employment type" value={id.employmentType} onInput={(v) => set('employmentType', v)} />
-        <Field label="Work setting" value={id.remotePreference} onInput={(v) => set('remotePreference', v)} />
+        <SelectField label="Citizenship" value={id.citizenship} options={CITIZENSHIP_OPTIONS} onChange={(v) => set('citizenship', v)} />
+        <SelectField label="Visa status" value={id.visaStatus} options={VISA_OPTIONS} onChange={(v) => set('visaStatus', v)} />
+        <SelectField label="Employment type" value={id.employmentType} options={EMPLOYMENT_OPTIONS} onChange={(v) => set('employmentType', v)} />
+        <SelectField label="Work setting" value={id.remotePreference} options={WORK_SETTING_OPTIONS} onChange={(v) => set('remotePreference', v)} />
         <Field label="Salary expectation" value={id.salaryExpectation} onInput={(v) => set('salaryExpectation', v)} />
         <Field label="Notice / start" value={id.noticePeriod} onInput={(v) => set('noticePeriod', v)} />
-        <Field label="Gender" value={id.gender} onInput={(v) => set('gender', v)} />
-        <Field label="Race / ethnicity" value={id.ethnicity} onInput={(v) => set('ethnicity', v)} />
-        <Field label="Veteran status" value={id.veteranStatus} onInput={(v) => set('veteranStatus', v)} />
-        <Field label="Disability status" value={id.disabilityStatus} onInput={(v) => set('disabilityStatus', v)} />
+        <SelectField label="Gender" value={id.gender} options={GENDER_OPTIONS} onChange={(v) => set('gender', v)} />
+        <SelectField label="Race / ethnicity" value={id.ethnicity} options={ETHNICITY_OPTIONS} onChange={(v) => set('ethnicity', v)} />
+        <SelectField label="Veteran status" value={id.veteranStatus} options={VETERAN_OPTIONS} onChange={(v) => set('veteranStatus', v)} />
+        <SelectField label="Disability status" value={id.disabilityStatus} options={DISABILITY_OPTIONS} onChange={(v) => set('disabilityStatus', v)} />
       </div>
       <div class="toolbar" />
       <label class="field span-2">
@@ -1191,19 +1307,7 @@ function SettingsTab({
                   : ''
                 : 'Enter a model slug to see price.'}
         </p>
-        <label class="check span-2">
-          <input
-            type="checkbox"
-            checked={s.fillUnmatchedWithAI}
-            onChange={(e) =>
-              void persist({
-                ...store,
-                settings: { ...s, fillUnmatchedWithAI: (e.target as HTMLInputElement).checked },
-              })
-            }
-          />
-          Use OpenRouter for unmatched and long-form fields
-        </label>
+        <p class="meta span-2">When Fill finds a question that needs a written answer, Carbon generates it automatically and puts it on the page.</p>
       </div>
       <div class="toolbar">
         <button class="btn" onClick={onLinkedIn}><Icon name="linkedin" /> Import LinkedIn tab</button>

@@ -5,9 +5,16 @@ import { expandRepeaters } from './repeaters'
 import { collectPageDiagnostics } from './diagnostics'
 import type { Msg } from '../lib/messages'
 import type { FillRequest } from '../lib/types'
+import { installLauncher } from './launcher'
 
 const LISTENER_KEY = '__carbonContentListener_v1__'
+const LAUNCHER_KEY = '__carbonLauncher_v1__'
 const contentGlobal = globalThis as typeof globalThis & Record<string, unknown>
+
+if (!contentGlobal[LAUNCHER_KEY]) {
+  contentGlobal[LAUNCHER_KEY] = true
+  installLauncher()
+}
 
 function handleMessage(msg: Msg, sendResponse: (response?: unknown) => void): boolean {
   void (async () => {

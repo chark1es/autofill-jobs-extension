@@ -71,7 +71,7 @@ components:
 
 ## Overview
 
-Carbon is an ATS recruiter console in popup form: a candidate file, not a chat overlay. White ground, charcoal ink, one utility blue for Fill, dense rows, status chips. Source Sans 3 is the only face. The popup is 400×600; the options tab is the same file at 760px.
+Carbon is an ATS recruiter console in a persistent browser side panel, with a compact popup for quick access. It is a candidate file, not a chat overlay. White ground, charcoal ink, one utility blue for Fill, dense rows, status chips. Source Sans 3 is the only face. The popup is 400×600; the options tab is the same file at 760px.
 
 ## Colors
 
@@ -83,7 +83,7 @@ One family, tight product scale. Title 16/650/−0.02em. Body 13. Meta 12 muted.
 
 ## Layout
 
-Header rail (title + Fill) → scrollable main → five equal bottom tabs. Fill tab: identity strip then a three-column field table (Field / Value / Status). Profile is a two-column form grid. Jobs are stacked records with a hairline, not cards-in-cards. Options page is the same chrome centered at 760px with side rules.
+Header rail (title, on/off switch, and Fill) → scrollable main → five equal bottom tabs. Fill tab: identity strip then a three-column table of every detected page input (Field / Value / Status). Profile is a two-column form grid. Jobs are stacked records with a hairline, not cards-in-cards. Options page is the same chrome centered at 760px with side rules.
 
 ## Elevation & Depth
 

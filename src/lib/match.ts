@@ -181,11 +181,40 @@ export function yesNoToChoice(value: string, options: string[]): string {
 
 export function matchSelect(value: string, options: string[]): string {
   if (!value || options.length === 0) return ''
-  const v = value.toLowerCase().trim()
-  const exact = options.find((o) => o.toLowerCase().trim() === v)
+  const normalize = (text: string) => text
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+  const intent = (text: string): string => {
+    const normalized = normalize(text)
+    if (/\b(prefer not|decline|do not wish|dont wish|do not want)\b/.test(normalized)) return 'decline'
+    if (/\b(not a protected veteran|not protected veteran)\b/.test(normalized)) return 'veteran-no'
+    if (/\bprotected veteran\b/.test(normalized)) return 'veteran-yes'
+    if (/\b(no|do not have)\b.*\bdisabil/.test(normalized)) return 'disability-no'
+    if (/\b(yes|have|had)\b.*\bdisabil/.test(normalized)) return 'disability-yes'
+    if (/\b(permanent resident|green card)\b/.test(normalized)) return 'permanent-resident'
+    if (/\b(us citizen|united states citizen)\b/.test(normalized)) return 'us-citizen'
+    return ''
+  }
+  const v = normalize(value)
+  const exact = options.find((option) => normalize(option) === v)
   if (exact) return exact
+  const wantedIntent = intent(value)
+  const semantic = wantedIntent && options.find((option) => intent(option) === wantedIntent)
+  if (semantic) return semantic
   const contains = options.find(
-    (o) => o.toLowerCase().includes(v) || v.includes(o.toLowerCase()),
+    (option) => {
+      const normalized = normalize(option)
+      const compactValue = v.replace(/\s+/g, '')
+      const compactOption = normalized.replace(/\s+/g, '')
+      return (
+        normalized.length > 1 && (normalized.includes(v) || v.includes(normalized))
+      ) || (
+        compactValue.length >= 3 &&
+        (compactOption.includes(compactValue) || compactValue.includes(compactOption))
+      )
+    },
   )
   return contains ?? ''
 }

@@ -24,6 +24,9 @@ export default defineManifest({
     page: 'src/options/index.html',
     open_in_tab: true,
   },
+  side_panel: {
+    default_path: 'src/sidepanel/index.html',
+  },
   background: {
     service_worker: 'src/background/sw.ts',
     type: 'module',
@@ -35,7 +38,7 @@ export default defineManifest({
       run_at: 'document_idle',
     },
   ],
-  permissions: ['storage', 'activeTab', 'scripting', 'tabs'],
+  permissions: ['storage', 'activeTab', 'scripting', 'tabs', 'sidePanel'],
   host_permissions: ['https://openrouter.ai/*', 'http://*/*', 'https://*/*'],
   commands: {
     'fill-form': {
@@ -45,7 +48,7 @@ export default defineManifest({
   },
   web_accessible_resources: [
     {
-      resources: ['icons/*'],
+      resources: ['icons/*', 'src/sidepanel/index.html'],
       matches: ['http://*/*', 'https://*/*'],
     },
   ],

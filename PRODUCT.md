@@ -28,7 +28,7 @@ The mechanism is a local dossier mapped onto whoever's form is on screen. Heuris
 ## Operating Context
 
 <!-- inferred from brief -->
-Used as a toolbar popup while an application tab is open. LinkedIn import happens on a LinkedIn profile tab. Resume arrives as a local file upload. OpenRouter is an optional user-supplied key. All profile data lives in `chrome.storage.local`. Export/import is a JSON file the user keeps.
+Used primarily as a persistent browser side panel opened from Carbon's page-edge launcher, with a toolbar popup available for quick access and re-enabling. LinkedIn import happens on a LinkedIn profile tab. Resume arrives as a local file upload. OpenRouter is an optional user-supplied key. All profile data lives in `chrome.storage.local`. Export/import is a JSON file the user keeps.
 
 ## Capabilities and Constraints
 
@@ -41,7 +41,8 @@ Confirmed from the request:
 - Store everything locally.
 - Export and import profile data.
 - OpenRouter keys must never appear in exported files.
-- Popup UI on toolbar click.
+- Persistent side panel opened from an in-page launcher, plus a popup UI on toolbar click.
+- A global enable switch that hides the launcher and prevents fills while Carbon is off.
 
 <!-- inferred -->
 Undecided / assumed:
