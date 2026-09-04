@@ -6,17 +6,43 @@ function setNative(
   value: string,
   commit = true,
 ) {
+  let nextValue = value
+  if (el instanceof HTMLInputElement && el.type === 'tel' && el.maxLength >= 10 && value.length > el.maxLength) {
+    let digits = value.replace(/\D/g, '')
+    if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1)
+    if (digits.length === 10 && el.maxLength >= 12) {
+      nextValue = `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`
+    }
+  }
   const proto = el instanceof HTMLTextAreaElement
     ? HTMLTextAreaElement.prototype
     : HTMLInputElement.prototype
   const desc = Object.getOwnPropertyDescriptor(proto, 'value')
-  desc?.set?.call(el, value)
-  el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: value }))
+  desc?.set?.call(el, nextValue)
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: nextValue }))
   if (commit) el.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
+}
+
+function normalized(value: string): string {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+}
+
+function deepElements(doc: Document): HTMLElement[] {
+  const elements: HTMLElement[] = []
+  const roots: Array<Document | ShadowRoot> = [doc]
+  while (roots.length) {
+    const root = roots.pop()!
+    root.querySelectorAll('*').forEach((node) => {
+      if (!(node instanceof HTMLElement)) return
+      elements.push(node)
+      if (node.shadowRoot) roots.push(node.shadowRoot)
+    })
+  }
+  return elements
 }
 
 async function pickSelect(el: HTMLSelectElement, value: string): Promise<boolean> {
@@ -33,20 +59,85 @@ async function pickSelect(el: HTMLSelectElement, value: string): Promise<boolean
   return true
 }
 
-async function pickRadio(el: HTMLElement, value: string): Promise<boolean> {
-  const name = el.getAttribute('name')
-  if (!name) return false
-  const group = el.ownerDocument.querySelectorAll(`input[name="${CSS.escape(name)}"]`)
-  const want = value.toLowerCase().trim()
-  for (const node of group) {
-    const input = node as HTMLInputElement
-    const lab = `${fieldLabel(input)} ${input.value}`.toLowerCase()
-    if (lab.includes(want) || want.includes(input.value.toLowerCase())) {
-      input.click()
-      input.checked = true
-      input.dispatchEvent(new Event('change', { bubbles: true }))
-      return true
-    }
+function choiceMembers(el: HTMLInputElement): HTMLInputElement[] {
+  const container = el.closest('c-as-apply-question, [role="radiogroup"], fieldset')
+  if (container) {
+    return [...container.querySelectorAll('input[type="radio"], input[type="checkbox"]')]
+      .filter((node): node is HTMLInputElement => node instanceof HTMLInputElement)
+  }
+  if (el.name) {
+    return [...el.ownerDocument.querySelectorAll(`input[name="${CSS.escape(el.name)}"]`)]
+      .filter((node): node is HTMLInputElement => node instanceof HTMLInputElement)
+  }
+  return [el]
+}
+
+function choiceLabel(input: HTMLInputElement): string {
+  const explicit = input.getAttribute('alt') || input.getAttribute('aria-label')
+  if (explicit) return explicit
+  if (input.id) {
+    const label = input.ownerDocument.querySelector(`label[for="${CSS.escape(input.id)}"]`)
+    if (label?.textContent?.trim()) return label.textContent.trim()
+  }
+  return input.value || fieldLabel(input)
+}
+
+function choiceMatches(label: string, value: string): boolean {
+  const option = normalized(label)
+  const want = normalized(value)
+  if (!option || !want) return false
+  if (option === want || option.includes(want) || want.includes(option)) return true
+  if (/^(yes|true|on|1)$/.test(want)) return /^(yes|agree|authorized|eligible)\b/.test(option)
+  if (/^(no|false|off|0)$/.test(want)) return /^(no|do not|not)\b/.test(option)
+  return false
+}
+
+async function pickInputChoice(el: HTMLInputElement, value: string): Promise<boolean> {
+  const members = choiceMembers(el)
+  const matches = members.filter((input) => choiceMatches(choiceLabel(input), value))
+
+  if (el.type === 'radio') {
+    const hit = matches[0]
+    if (!hit) return false
+    if (!hit.checked) hit.click()
+    return hit.checked || hit.getAttribute('aria-checked') === 'true'
+  }
+
+  if (members.length === 1) {
+    const on = /^(yes|true|on|1)$/i.test(value)
+    if (el.checked !== on) el.click()
+    return el.checked === on
+  }
+
+  let selected = false
+  for (const input of members) {
+    const shouldCheck = matches.includes(input)
+    if (input.checked !== shouldCheck) input.click()
+    if (shouldCheck && (input.checked || input.getAttribute('aria-checked') === 'true')) selected = true
+  }
+  return selected
+}
+
+async function pickButtonMenu(el: HTMLButtonElement, value: string): Promise<boolean> {
+  const existing = new Set(deepElements(el.ownerDocument).filter((node) =>
+    node.matches('[role="menuitem"], [role="option"], lightning-menu-item, lightning-base-combobox-item'),
+  ))
+  el.click()
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await sleep(100)
+    const candidates = deepElements(el.ownerDocument).filter((node) => {
+      if (!node.matches('[role="menuitem"], [role="option"], lightning-menu-item, lightning-base-combobox-item')) return false
+      if (!visible(node)) return false
+      return !existing.has(node) || el.getAttribute('aria-expanded') === 'true'
+    })
+    const exact = candidates.find((node) => normalized(node.textContent || '') === normalized(value))
+    const partial = candidates.find((node) => choiceMatches(node.textContent || '', value))
+    const hit = exact || partial
+    if (!hit) continue
+    hit.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
+    if (hit.isConnected) hit.click()
+    await sleep(50)
+    return true
   }
   return false
 }
@@ -122,10 +213,6 @@ function suggestionOptions(el: HTMLElement): HTMLElement[] {
     root.querySelectorAll(SUGGESTION_SELECTOR).forEach(add)
   }
   return options
-}
-
-function normalized(value: string): string {
-  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
 }
 
 function suggestionScore(option: HTMLElement, value: string, hints: string[]): number {
@@ -269,20 +356,22 @@ export async function fillFields(
         else failed.push({ uid: item.uid, reason: 'No matching option.' })
         continue
       }
-      if (el instanceof HTMLInputElement && (el.type === 'radio' || el.type === 'checkbox')) {
-        if (el.type === 'checkbox') {
-          const on = /^(yes|true|on|1)$/i.test(item.value)
-          if (el.checked !== on) el.click()
+      if (el instanceof HTMLButtonElement && el.getAttribute('aria-haspopup') === 'true') {
+        const ok = await pickButtonMenu(el, item.value)
+        if (ok) {
           filled += 1
           filledUids.push(item.uid)
         } else {
-          const ok = await pickRadio(el, item.value)
-          if (ok) {
-            filled += 1
-            filledUids.push(item.uid)
-          }
-          else failed.push({ uid: item.uid, reason: 'No matching choice.' })
+          failed.push({ uid: item.uid, reason: 'No matching menu option.' })
         }
+        continue
+      }
+      if (el instanceof HTMLInputElement && (el.type === 'radio' || el.type === 'checkbox')) {
+        const ok = await pickInputChoice(el, item.value)
+        if (ok) {
+          filled += 1
+          filledUids.push(item.uid)
+        } else failed.push({ uid: item.uid, reason: 'No matching choice.' })
         continue
       }
       if (looksLikeSuggestionInput(el)) {

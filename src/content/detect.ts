@@ -4,6 +4,7 @@ import type { DetectedField, DetectResult } from '../lib/types'
 const SKIP_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'color'])
 const HONEYPOT = /\b(honeypot|website_url|fax|leave.?blank)\b/i
 const MANUAL_CHECKBOX = /\b(terms?|privacy|consent|communication.?preference|marketing|newsletter|opt.?in)\b/i
+const MANUAL_CHOICE = /\b(consent|privacy|terms?|marketing|newsletter|text messages?|sms|communication preference|contacted regarding)\b/i
 
 function visible(el: HTMLElement): boolean {
   if (el.getAttribute('aria-hidden') === 'true') return false
@@ -34,6 +35,41 @@ function textOf(el: Element | null): string {
   return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
+function customMenuLabel(el: HTMLElement): string {
+  if (!(el instanceof HTMLButtonElement) || el.getAttribute('aria-haspopup') !== 'true') return ''
+  const wrapper = el.closest('c-lwc-drop-down-menu')
+  const wrapperLabel = wrapper?.querySelector('.labelTextDropDown')
+  if (wrapperLabel) {
+    const ownText = textOf(el)
+    const label = textOf(wrapperLabel).replace(ownText, '').replace(/\s*\*\s*$/, '').trim()
+    if (label) return label
+  }
+  const hostLabel = el.closest('lightning-button-menu')?.getAttribute('aria-label') || ''
+  return hostLabel.replace(/^select\s+(?:a|an|the)\s+/i, '').replace(/show menu$/i, '').trim()
+}
+
+function choiceContainer(el: HTMLElement): HTMLElement | null {
+  return el.closest('c-as-apply-question, [role="radiogroup"], fieldset') as HTMLElement | null
+}
+
+function choiceQuestion(el: HTMLElement): string {
+  const container = choiceContainer(el)
+  if (!container) return ''
+  return textOf(container.querySelector('.as-question-title, legend, [role="heading"], h1, h2, h3, h4'))
+    .replace(/\s*\*\s*$/, '')
+    .trim()
+}
+
+function choiceOptionLabel(el: HTMLInputElement): string {
+  if (el.getAttribute('alt')) return el.getAttribute('alt')!.trim()
+  if (el.id) {
+    const label = el.ownerDocument.querySelector(`label[for="${cssEscape(el.id)}"]`)
+    const labelText = textOf(label)
+    if (labelText) return labelText
+  }
+  return el.getAttribute('aria-label') || el.value || ''
+}
+
 function sectionContext(el: HTMLElement): string {
   const section = el.closest(
     'fieldset, section, [class*="experience"], [class*="employment"], [class*="education"], [class*="school"]',
@@ -51,6 +87,12 @@ function labelledBy(el: HTMLElement): string {
 }
 
 export function fieldLabel(el: HTMLElement): string {
+  const menu = customMenuLabel(el)
+  if (menu) return menu
+  if (el instanceof HTMLInputElement && (el.type === 'radio' || el.type === 'checkbox')) {
+    const question = choiceQuestion(el)
+    if (question) return question
+  }
   const aria = el.getAttribute('aria-label')
   if (aria) return aria.trim()
   const by = labelledBy(el)
@@ -91,6 +133,14 @@ function optionsOf(el: HTMLElement): string[] {
   if (el instanceof HTMLSelectElement) {
     return [...el.options].map((o) => o.textContent?.trim() || o.value).filter(Boolean)
   }
+  if (el instanceof HTMLInputElement && (el.type === 'radio' || el.type === 'checkbox')) {
+    const container = choiceContainer(el)
+    if (container) {
+      return [...container.querySelectorAll('input[type="radio"], input[type="checkbox"]')]
+        .map((node) => choiceOptionLabel(node as HTMLInputElement))
+        .filter(Boolean)
+    }
+  }
   const groupName = el.getAttribute('name')
   if (
     (el instanceof HTMLInputElement && (el.type === 'radio' || el.type === 'checkbox')) &&
@@ -130,6 +180,9 @@ function currentValue(el: HTMLElement): string {
 }
 
 function isField(el: HTMLElement): boolean {
+  if (el instanceof HTMLButtonElement && customMenuLabel(el)) {
+    return /\b(country|state|province|region)\b/i.test(customMenuLabel(el))
+  }
   if (el instanceof HTMLInputElement) {
     if (SKIP_TYPES.has(el.type)) return false
     if (el.disabled || el.readOnly) return false
@@ -224,6 +277,8 @@ export function detectFields(): DetectResult {
         el.id,
       ].filter(Boolean).join(' ')
       if (HONEYPOT.test(identity)) return false
+      const question = choiceQuestion(el)
+      if (question && MANUAL_CHOICE.test(question)) return false
       if (el instanceof HTMLInputElement && el.type === 'checkbox' && MANUAL_CHECKBOX.test(identity)) {
         return false
       }
@@ -253,12 +308,14 @@ export function detectFields(): DetectResult {
       return { el, label, name, autocomplete, inputType, tag, options, matchKey, kind }
     })
 
-  const radioSeen = new Set<string>()
+  const choiceSeen = new Set<string | Element>()
   const fields: DetectedField[] = []
   prelim.forEach((p) => {
-    if (p.inputType === 'radio' && p.name) {
-      if (radioSeen.has(p.name)) return
-      radioSeen.add(p.name)
+    if (p.el instanceof HTMLInputElement && (p.inputType === 'radio' || p.inputType === 'checkbox')) {
+      const container = choiceContainer(p.el)
+      const group: string | Element | null = container || (p.name ? `${p.inputType}:${p.name}` : null)
+      if (group && choiceSeen.has(group)) return
+      if (group) choiceSeen.add(group)
     }
     const uid = `f${fields.length}_${(p.name || p.label || 'x').slice(0, 24).replace(/\W+/g, '_')}`
     stamp(p.el, uid)
@@ -276,7 +333,11 @@ export function detectFields(): DetectResult {
       autocomplete: p.autocomplete,
       inputType: p.inputType,
       tag: p.tag,
-      required: p.el.hasAttribute('required') || p.el.getAttribute('aria-required') === 'true',
+      required:
+        p.el.hasAttribute('required') ||
+        p.el.getAttribute('aria-required') === 'true' ||
+        Boolean(p.el.closest('c-lwc-drop-down-menu')?.querySelector('.asterisk')) ||
+        Boolean(choiceContainer(p.el)?.querySelector('.as-question-title span')),
       options: p.options,
       matchKey: p.matchKey,
       currentValue: currentValue(p.el),

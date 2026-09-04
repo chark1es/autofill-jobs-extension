@@ -6,12 +6,13 @@ import { collectPageDiagnostics } from './diagnostics'
 import type { Msg } from '../lib/messages'
 import type { FillRequest } from '../lib/types'
 import { installLauncher } from './launcher'
+import { hasExtensionContext } from '../lib/extension-context'
 
 const LISTENER_KEY = '__carbonContentListener_v1__'
 const LAUNCHER_KEY = '__carbonLauncher_v1__'
 const contentGlobal = globalThis as typeof globalThis & Record<string, unknown>
 
-if (!contentGlobal[LAUNCHER_KEY]) {
+if (hasExtensionContext() && !contentGlobal[LAUNCHER_KEY]) {
   contentGlobal[LAUNCHER_KEY] = true
   installLauncher()
 }
@@ -50,9 +51,13 @@ function handleMessage(msg: Msg, sendResponse: (response?: unknown) => void): bo
 // The manifest loader and the synchronous recovery bundle can briefly overlap
 // on a slow page. Install one listener per frame so a fill action never runs
 // twice when that race occurs.
-if (!contentGlobal[LISTENER_KEY]) {
-  contentGlobal[LISTENER_KEY] = true
-  chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) =>
-    handleMessage(msg, sendResponse),
-  )
+if (hasExtensionContext() && !contentGlobal[LISTENER_KEY]) {
+  try {
+    chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) =>
+      handleMessage(msg, sendResponse),
+    )
+    contentGlobal[LISTENER_KEY] = true
+  } catch {
+    // A page can outlive the extension context during a development reload.
+  }
 }

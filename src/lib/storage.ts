@@ -3,14 +3,23 @@ import {
   type ExportBundle,
   type Store,
 } from './types'
+import { hasExtensionContext, isExtensionContextInvalidated } from './extension-context'
 
 const KEY = 'carbon.store.v1'
 
 export async function loadStore(): Promise<Store> {
-  if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+  if (!hasExtensionContext() || !chrome.storage?.local) {
     return structuredClone(EMPTY_STORE)
   }
-  const raw = await chrome.storage.local.get(KEY)
+  let raw: Record<string, unknown>
+  try {
+    raw = await chrome.storage.local.get(KEY)
+  } catch (error) {
+    if (isExtensionContextInvalidated(error) || !hasExtensionContext()) {
+      return structuredClone(EMPTY_STORE)
+    }
+    throw error
+  }
   const stored = raw[KEY] as Store | undefined
   if (!stored || stored.version !== 1) return structuredClone(EMPTY_STORE)
   return {
@@ -27,12 +36,16 @@ export async function loadStore(): Promise<Store> {
 }
 
 export async function saveStore(store: Store): Promise<void> {
-  if (typeof chrome === 'undefined' || !chrome.storage?.local) return
-  await chrome.storage.local.set({ [KEY]: store })
+  if (!hasExtensionContext() || !chrome.storage?.local) return
+  try {
+    await chrome.storage.local.set({ [KEY]: store })
+  } catch (error) {
+    if (!isExtensionContextInvalidated(error) && hasExtensionContext()) throw error
+  }
 }
 
 export function subscribeStore(cb: (store: Store) => void): () => void {
-  if (typeof chrome === 'undefined' || !chrome.storage?.onChanged) return () => {}
+  if (!hasExtensionContext() || !chrome.storage?.onChanged) return () => {}
   const listener = (
     changes: { [key: string]: chrome.storage.StorageChange },
     area: string,
@@ -40,8 +53,19 @@ export function subscribeStore(cb: (store: Store) => void): () => void {
     if (area !== 'local' || !changes[KEY]) return
     void loadStore().then(cb)
   }
-  chrome.storage.onChanged.addListener(listener)
-  return () => chrome.storage.onChanged.removeListener(listener)
+  try {
+    chrome.storage.onChanged.addListener(listener)
+  } catch {
+    return () => {}
+  }
+  return () => {
+    if (!hasExtensionContext()) return
+    try {
+      chrome.storage.onChanged.removeListener(listener)
+    } catch {
+      // The extension may have reloaded while this page remained open.
+    }
+  }
 }
 
 export function toExportBundle(store: Store): ExportBundle {

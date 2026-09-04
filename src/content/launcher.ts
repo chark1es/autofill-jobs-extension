@@ -1,7 +1,17 @@
 import { loadStore, subscribeStore } from '../lib/storage'
+import { hasExtensionContext } from '../lib/extension-context'
 
 const HOST_ID = '__carbon_side_launcher__'
 const DRAWER_ID = '__carbon_in_page_drawer__'
+
+function extensionUrl(path: string): string | null {
+  if (!hasExtensionContext()) return null
+  try {
+    return chrome.runtime.getURL(path)
+  } catch {
+    return null
+  }
+}
 
 function closeDrawer() {
   document.getElementById(DRAWER_ID)?.remove()
@@ -9,6 +19,11 @@ function closeDrawer() {
 
 function openDrawer() {
   closeDrawer()
+  const frameUrl = extensionUrl('src/sidepanel/index.html')
+  if (!frameUrl) {
+    document.getElementById(HOST_ID)?.remove()
+    return
+  }
   const host = document.createElement('div')
   host.id = DRAWER_ID
   host.setAttribute('data-carbon-ui', 'drawer')
@@ -74,7 +89,7 @@ function openDrawer() {
   note.append(text, close)
   const frame = document.createElement('iframe')
   frame.title = 'Carbon'
-  frame.src = chrome.runtime.getURL('src/sidepanel/index.html')
+  frame.src = frameUrl
   drawer.append(note, frame)
   shadow.append(style, drawer)
   document.documentElement.append(host)
@@ -119,22 +134,43 @@ function launcherHost(): HTMLElement {
   button.title = 'Open Carbon'
   button.setAttribute('aria-label', 'Open Carbon side panel')
   const icon = document.createElement('img')
-  icon.src = chrome.runtime.getURL('icons/icon-32.png')
+  const iconUrl = extensionUrl('icons/icon-32.png')
+  if (!iconUrl) return host
+  icon.src = iconUrl
   icon.alt = ''
   button.append(icon)
   button.addEventListener('click', () => {
+    if (!hasExtensionContext()) {
+      closeDrawer()
+      host.remove()
+      return
+    }
     if (document.getElementById(DRAWER_ID)) {
       closeDrawer()
       return
     }
     button.disabled = true
-    void chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' })
+    let request: Promise<{ ok?: boolean; error?: string } | undefined>
+    try {
+      request = chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' })
+    } catch {
+      closeDrawer()
+      host.remove()
+      return
+    }
+    void request
       .then((response: { ok?: boolean; error?: string } | undefined) => {
-        if (!response?.ok) openDrawer()
+        if (!response?.ok && hasExtensionContext()) openDrawer()
       })
-      .catch(() => openDrawer())
+      .catch(() => {
+        if (hasExtensionContext()) openDrawer()
+        else {
+          closeDrawer()
+          host.remove()
+        }
+      })
       .finally(() => {
-        button.disabled = false
+        if (button.isConnected) button.disabled = false
       })
   })
   shadow.append(style, button)
@@ -152,6 +188,18 @@ function setLauncherVisible(enabled: boolean) {
 }
 
 export function installLauncher() {
-  void loadStore().then((store) => setLauncherVisible(store.settings.enabled))
-  subscribeStore((store) => setLauncherVisible(store.settings.enabled))
+  if (!hasExtensionContext()) return
+  void loadStore()
+    .then((store) => {
+      if (hasExtensionContext()) setLauncherVisible(store.settings.enabled)
+    })
+    .catch(() => {
+      if (!hasExtensionContext()) {
+        closeDrawer()
+        document.getElementById(HOST_ID)?.remove()
+      }
+    })
+  subscribeStore((store) => {
+    if (hasExtensionContext()) setLauncherVisible(store.settings.enabled)
+  })
 }

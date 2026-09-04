@@ -15,7 +15,7 @@ const VOCAB: Vocab[] = [
   { key: 'email', kind: 'text', tests: [/\be-?mail\b/i, /autocomplete.*email/i] },
   { key: 'phoneAlt', kind: 'text', tests: [/\b(alt(?:ernate)?|secondary|home|other)\b.*\bphone\b/i, /\bphone\s*(2|two)\b/i] },
   { key: 'phone', kind: 'text', tests: [/\b(phone|mobile|cell|telephone)\b/i, /\btel\b/i] },
-  { key: 'address1', kind: 'text', tests: [/\bstreet\s*address\b/i, /\baddress\s*(line)?\s*1\b/i, /^address$/i] },
+  { key: 'address1', kind: 'text', tests: [/\b(street|mailing|home)\s*address\b/i, /\baddress\s*(line)?\s*1\b/i, /^address$/i] },
   { key: 'address2', kind: 'text', tests: [/\baddress\s*(line)?\s*2\b/i, /\b(apt|suite|unit|building)\b/i] },
   { key: 'city', kind: 'text', tests: [/\b(city|town|locality)\b/i] },
   { key: 'state', kind: 'text', tests: [/\b(state|province|region)\b/i] },
@@ -34,11 +34,11 @@ const VOCAB: Vocab[] = [
   { key: 'salaryExpectation', kind: 'text', tests: [/\b(salary|compensation|pay|expected\s*comp)\b/i] },
   { key: 'pronouns', kind: 'text', tests: [/\bpronouns?\b/i] },
   { key: 'desiredJobTitle', kind: 'text', tests: [/\b(desired|preferred)\s+(job\s+)?(title|role|position)\b/i] },
-  { key: 'yearsExperience', kind: 'text', tests: [/\b(years?|yrs?)\s+(of\s+)?(professional\s+)?experience\b/i, /\btotal\s+experience\b/i] },
+  { key: 'yearsExperience', kind: 'text', tests: [/\b(years?|yrs?)\s+(of\s+)?((professional|work)\s+)?experience\b/i, /\btotal\s+experience\b/i] },
   { key: 'citizenship', kind: 'choice', tests: [/\bcitizenship\b/i, /\bcitizen\s+of\b/i] },
   { key: 'visaStatus', kind: 'choice', tests: [/\b(visa|immigration)\s+status\b/i, /\bcurrent\s+visa\b/i] },
   { key: 'employmentType', kind: 'choice', tests: [/\b(preferred|desired)\s+employment\s+type\b/i, /\b(full.?time|part.?time|contract)\s+preference\b/i] },
-  { key: 'remotePreference', kind: 'choice', tests: [/\b(remote|hybrid|on.?site)\s+(work\s+)?preference\b/i, /\bpreferred\s+work\s+(setting|location)\b/i] },
+  { key: 'remotePreference', kind: 'choice', tests: [/\b(remote|hybrid|on.?site)\s+(work\s+)?preference\b/i, /\bpreferred\s+work\s+(setting|location)\b/i, /\bwork\s*settings?\b/i] },
   { key: 'willingToTravel', kind: 'choice', tests: [/\bwilling(ness)?\s+to\s+travel\b/i, /\btravel\s+requirement\b/i] },
   { key: 'gender', kind: 'choice', tests: [/\b(gender|gender identity|sex)\b/i] },
   { key: 'ethnicity', kind: 'choice', tests: [/\b(race|ethnicity|ethnic background)\b/i] },
@@ -129,8 +129,6 @@ export function classifyField(field: {
     text.length > 80 ||
     /\?/.test(field.label) ||
     /\b(describe|explain|why|how|tell us|tell me|cover letter|additional (information|comments)|motivation|motivated|interest(?:ed)?|qualifications?|accomplishments?|challenge|proud of|experience with|please provide|please share)\b/i.test(text)
-  if (looksLong && !sectionKind) return { matchKey: 'longform', kind: 'longform' }
-
   const ordered = sectionKind
     ? [...VOCAB.filter((item) => item.kind === sectionKind), ...VOCAB.filter((item) => item.kind !== sectionKind)]
     : VOCAB
@@ -200,6 +198,20 @@ export function matchSelect(value: string, options: string[]): string {
   const v = normalize(value)
   const exact = options.find((option) => normalize(option) === v)
   if (exact) return exact
+  const years = Number.parseFloat(value)
+  if (Number.isFinite(years)) {
+    const yearRange = options.find((option) => {
+      const text = normalize(option)
+      if (/\bnone\b/.test(text)) return years === 0
+      if (/\bless than (?:a|one|1) year\b/.test(text)) return years > 0 && years < 1
+      const range = text.match(/\b(\d+)\s+(\d+)\s+years?\b/)
+      if (range) return years >= Number(range[1]) && years <= Number(range[2])
+      const plus = text.match(/\b(\d+)\s+years?\b.*\bplus\b|\b(\d+)\s+years?\b$/)
+      const minimum = Number(plus?.[1] || plus?.[2])
+      return Boolean(plus) && years >= minimum
+    })
+    if (yearRange) return yearRange
+  }
   const wantedIntent = intent(value)
   const semantic = wantedIntent && options.find((option) => intent(option) === wantedIntent)
   if (semantic) return semantic
