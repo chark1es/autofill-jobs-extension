@@ -26,7 +26,15 @@ function handleMessage(msg: Msg, sendResponse: (response?: unknown) => void): bo
       }
       if (msg.type === 'FILL') {
         const payload = (msg as { payload: FillRequest }).payload
-        sendResponse(await fillFields(payload.items, payload.resume))
+        sendResponse(await fillFields(payload.items, payload.resume, payload.runId ? (progress) => {
+          // A closed popup must not stop the remaining page writes.
+          try {
+            void chrome.runtime.sendMessage({
+              type: 'FILL_PROGRESS',
+              payload: { ...progress, runId: payload.runId },
+            }).catch(() => {})
+          } catch { /* The extension context may have closed. */ }
+        } : undefined))
         return
       }
       if (msg.type === 'IMPORT_LINKEDIN') {

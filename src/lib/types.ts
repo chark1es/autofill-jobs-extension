@@ -142,7 +142,15 @@ export interface FillPlanItem {
 
 export interface FillRequest {
   items: FillPlanItem[]
+  runId?: string
   resume?: { name: string; mime: string; dataBase64: string }
+}
+
+export interface FillFieldProgress {
+  runId: string
+  uid: string
+  status: 'filling' | 'filled' | 'failed'
+  reason?: string
 }
 
 export interface FillResult {

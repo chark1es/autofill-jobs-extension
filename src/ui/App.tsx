@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'preact/hooks'
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
 import type { ComponentChildren } from 'preact'
 import type { DetectedField, DetectResult, Experience, Education, MatchStatus, Store } from '../lib/types'
 import { EMPTY_IDENTITY, EMPTY_STORE } from '../lib/types'
 import { fromExportBundle, loadStore, saveStore, subscribeStore, toExportBundle, uid } from '../lib/storage'
-import { sendTabOrInject } from '../lib/messages'
+import { sendTabOrInject, type Msg } from '../lib/messages'
 import { findSavedAnswer, heuristicValue, isOpenEndedField, needsAI, suggestionHints } from '../lib/match'
-import { completeWithOpenRouter, fetchModelPricing, formatModelCost, formatUsdShort, type ModelPricing } from '../lib/openrouter'
+import { completeQuestionsWithOpenRouter, completeWithOpenRouter, fetchModelPricing, formatModelCost, formatUsdShort, type ModelPricing } from '../lib/openrouter'
 import { CUSTOM_MODEL, isPresetModel, OPENROUTER_MODELS } from '../lib/types'
 import { Icon } from './icons'
 
@@ -17,6 +17,14 @@ interface Row {
   status: MatchStatus
   source: 'heuristic' | 'ai'
   failureReason?: string
+}
+
+interface FillReport {
+  runId: string
+  title: string
+  stage: 'preparing' | 'generating' | 'filling' | 'complete' | 'error'
+  message: string
+  rows: Row[]
 }
 
 async function currentTab(): Promise<chrome.tabs.Tab | null> {
@@ -91,6 +99,8 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
   const [writingUid, setWritingUid] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [fillReport, setFillReport] = useState<FillReport | null>(null)
+  const filling = useRef(false)
 
   useEffect(() => {
     void loadStore().then(setStore)
@@ -110,6 +120,7 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
   }, [])
 
   const refreshDetect = useCallback(async () => {
+    if (filling.current) return
     setError('')
     const t = await currentTab()
     if (!t?.id || !t.url || t.url.startsWith('chrome')) {
@@ -119,7 +130,7 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
     }
     try {
       const d = await ensureDetect(t.id)
-      setDetect(d)
+      if (!filling.current) setDetect(d)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not read this page.')
     }
@@ -240,100 +251,114 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
   }
 
   async function fillNow() {
+    if (filling.current || busy) return
     setError('')
+    setNotice('')
     if (!store.settings.enabled) {
       setError('Turn Carbon on before filling this page.')
       return
     }
-    setBusy('Filling')
-    const t = await currentTab()
-    if (!t?.id) {
-      setBusy('')
-      setError('No active tab.')
-      return
+    filling.current = true
+    setBusy('Preparing application')
+    const runId = crypto.randomUUID()
+    let nextRows: Row[] = []
+    let targetTabId: number | undefined
+    const publish = (stage: FillReport['stage'], message: string) => {
+      setRows([...nextRows])
+      setFillReport((report) => report?.runId === runId
+        ? { ...report, stage, message, rows: [...nextRows] } : report)
+    }
+    setFillReport({ runId, title: detect?.title || 'Application', stage: 'preparing', message: 'Preparing sections and finding fields…', rows: [] })
+    const listener = (msg: Msg, sender: chrome.runtime.MessageSender) => {
+      if (msg.type !== 'FILL_PROGRESS' || msg.payload.runId !== runId || sender.tab?.id !== targetTabId) return
+      const progress = msg.payload
+      nextRows = nextRows.map((row) => row.field.uid === progress.uid
+        ? { ...row, status: progress.status === 'filling' ? 'writing' : progress.status, failureReason: progress.reason }
+        : row)
+      const field = nextRows.find((row) => row.field.uid === progress.uid)
+      publish('filling', progress.status === 'filling' ? 'Filling ' + (field?.field.label || 'field') + '…' : 'Applying answers to the form…')
     }
     try {
-      await sendTabOrInject(t.id, {
+      chrome.runtime?.onMessage?.addListener(listener)
+      const t = await currentTab()
+      if (!t?.id) throw new Error('No active tab.')
+      targetTabId = t.id
+      const expanded = await sendTabOrInject(t.id, {
         type: 'EXPAND_REPEATERS',
         payload: { experience: store.experience.length, education: store.education.length },
       })
+      if ('error' in expanded) throw new Error(String(expanded.error))
       const freshDetect = await ensureDetect(t.id)
+      if ('error' in freshDetect) throw new Error(String(freshDetect.error))
       setDetect(freshDetect)
+      setFillReport((report) => report ? { ...report, title: freshDetect.title || t.title || 'Application' } : report)
       const drafts = new Map(
-        rows
-          .filter((row) => isOpenEndedField(row.field) && row.value)
+        rows.filter((row) => isOpenEndedField(row.field) && row.value)
           .map((row) => [row.field.uid, row] as const),
       )
-      const nextRows = rowsFor(freshDetect, store).map((row) => {
+      nextRows = rowsFor(freshDetect, store).map((row): Row => {
         const draft = drafts.get(row.field.uid)
-        if (!draft) return row
-        return {
-          ...row,
-          value: draft.value,
-          source: draft.source,
-          status: valuesMatch(row.field.currentValue, draft.value) ? 'filled' as const : 'mapped' as const,
+        if (draft) row = {
+          ...row, value: draft.value, source: draft.source,
+          status: valuesMatch(row.field.currentValue, draft.value) ? 'filled' : 'mapped',
         }
+        if (row.status === 'filled') return { ...row, status: 'skipped', failureReason: 'Already has a value. No change needed.' }
+        if (row.value) return row
+        if (row.status !== 'needs-ai') return {
+          ...row, status: 'skipped', failureReason: row.field.kind === 'file' ? 'No matching file is available to attach.' : 'No matching value in your profile or saved answers.',
+        }
+        if (!store.settings.openrouterKey || !store.settings.openrouterModel.trim()) return {
+          ...row, status: 'skipped', failureReason: 'Add an OpenRouter key and choose a model in Settings to answer this question.',
+        }
+        return { ...row, status: 'writing' }
       })
-      setRows(nextRows)
-      for (let i = 0; i < nextRows.length; i++) {
-        const row = nextRows[i]
-        if (row.value) continue
-        if (row.status !== 'needs-ai') continue
-        if (!store.settings.openrouterKey) {
-          nextRows[i] = {
-            ...row,
-            status: 'failed',
-            failureReason: 'Add an OpenRouter key in Settings to generate this answer.',
-          }
-          continue
-        }
-        nextRows[i] = { ...row, status: 'writing' }
-        setRows([...nextRows])
-        try {
-          const text = await completeWithOpenRouter({
-            key: store.settings.openrouterKey,
-            model: store.settings.openrouterModel,
-            question: row.field.label,
-            options: row.field.options,
-            store,
-            pageTitle: freshDetect.title || t.title || '',
+      const questions = nextRows.filter((row) => row.status === 'writing')
+        .map((row) => ({ uid: row.field.uid, question: row.field.label, options: row.field.options }))
+      publish(questions.length ? 'generating' : 'filling', questions.length ? 'Generating answers for ' + questions.length + ' questions in batches…' : 'Applying profile values…')
+      await completeQuestionsWithOpenRouter({
+        key: store.settings.openrouterKey,
+        model: store.settings.openrouterModel,
+        questions,
+        store,
+        pageTitle: freshDetect.title || t.title || '',
+        onProgress: (completed, total, answers) => {
+          const byUid = new Map(answers.map((answer) => [answer.uid, answer]))
+          nextRows = nextRows.map((row) => {
+            const answer = byUid.get(row.field.uid)
+            if (!answer) return row
+            return answer.value
+              ? { ...row, value: answer.value, status: 'mapped', source: 'ai' }
+              : { ...row, status: answer.skipped ? 'skipped' : 'failed', failureReason: answer.skipped || answer.error }
           })
-          nextRows[i] = { ...row, value: text, status: 'mapped', source: 'ai' }
-        } catch (e) {
-          nextRows[i] = {
-            ...row,
-            status: 'failed',
-            failureReason: e instanceof Error ? e.message : 'OpenRouter failed.',
-          }
-          setError(e instanceof Error ? e.message : 'OpenRouter failed.')
-        }
-        setRows([...nextRows])
-      }
-      const items = nextRows
-        .filter((r) => r.value)
-        .map((r) => ({
-          uid: r.field.uid,
-          value: r.value,
-          source: r.source,
-          suggestionHints: suggestionHints(r.field, store),
-        }))
+          publish('generating', 'Processed ' + completed + ' of ' + total + ' AI questions…')
+        },
+      })
+      const items = nextRows.filter((row) => row.status === 'mapped' && row.value)
+        .map((row) => ({ uid: row.field.uid, value: row.value, source: row.source, suggestionHints: suggestionHints(row.field, store) }))
       const resume = store.resume
         ? { name: store.resume.name, mime: store.resume.mime, dataBase64: store.resume.dataBase64 }
         : undefined
-      const result = await sendTabOrInject(t.id, { type: 'FILL', payload: { items, resume } })
-      const filled = new Set(result.filledUids ?? [])
-      const failed = new Map(result.failed.map((item) => [item.uid, item.reason]))
-      setRows(nextRows.map((row) => ({
-        ...row,
-        status: filled.has(row.field.uid) ? 'filled' : 'failed',
-        failureReason: filled.has(row.field.uid)
-          ? undefined
-          : failed.get(row.field.uid) ?? row.failureReason ?? (row.value ? "The page didn't accept this value." : 'No profile value or AI answer was available.'),
-      })))
-      setNotice(`Wrote ${result.filled} fields${result.failed.length ? ` · ${result.failed.length} failed` : ''}.`)
+      publish('filling', 'Applying ' + items.length + ' answers to the form…')
+      if (items.length) {
+        const result = await sendTabOrInject(t.id, { type: 'FILL', payload: { items, resume, runId } })
+        if ('error' in result) throw new Error(String(result.error))
+        const attempted = new Set(items.map((item) => item.uid))
+        const filled = new Set(result.filledUids)
+        const failed = new Map(result.failed.map((item) => [item.uid, item.reason]))
+        nextRows = nextRows.map((row) => !attempted.has(row.field.uid) ? row : {
+          ...row, status: filled.has(row.field.uid) ? 'filled' : 'failed',
+          failureReason: filled.has(row.field.uid) ? undefined : failed.get(row.field.uid) || "The page didn't accept this value.",
+        })
+      }
+      publish('complete', nextRows.length ? 'Review your answers on the page before submitting.' : 'No fillable fields were found on this page.')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Fill failed.')
+      const message = e instanceof Error ? e.message : 'Fill failed.'
+      nextRows = nextRows.map((row) => ['mapped', 'writing', 'needs-ai', 'empty'].includes(row.status)
+        ? { ...row, status: 'failed', failureReason: message } : row)
+      publish('error', message)
     } finally {
+      chrome.runtime?.onMessage?.removeListener(listener)
+      filling.current = false
       setBusy('')
     }
   }
@@ -391,6 +416,10 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
     } finally {
       setBusy('')
     }
+  }
+
+  if (fillReport) {
+    return <FillProgressView report={fillReport} onBack={() => { setFillReport(null); setTab('fill') }} />
   }
 
   return (
@@ -475,6 +504,59 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
           </button>
         ))}
       </nav>
+    </div>
+  )
+}
+
+function FillProgressView({ report, onBack }: { report: FillReport; onBack: () => void }) {
+  const finished = report.stage === 'complete' || report.stage === 'error'
+  const filled = report.rows.filter((row) => row.status === 'filled')
+  const skipped = report.rows.filter((row) => row.status === 'skipped')
+  const failed = report.rows.filter((row) => row.status === 'failed')
+  const pending = report.rows.filter((row) => !['filled', 'skipped', 'failed'].includes(row.status))
+  const completed = filled.length + skipped.length + failed.length
+  const stages = ['Prepare form', 'Generate answers', 'Fill fields', 'Review results']
+  const stageIndex = report.stage === 'preparing' ? 0 : report.stage === 'generating' ? 1 : report.stage === 'filling' ? 2 : 3
+  return (
+    <div class="app fill-progress-view">
+      <header class="header">
+        <div class="header-copy"><h1>Carbon</h1><p class="meta status">Application progress</p></div>
+        {finished ? <button class="btn" onClick={onBack}>Back to form</button> : <span class="status-chip writing">In progress</span>}
+      </header>
+      <main class="main progress-main">
+        <section class="progress-summary" aria-labelledby="progress-title">
+          <h2 id="progress-title">{report.stage === 'error' ? 'Fill stopped' : finished ? failed.length ? 'Fill finished with issues' : 'Fill complete' : 'Filling your application'}</h2>
+          <p class="progress-page">{report.title}</p>
+          <p class="progress-message" role={report.stage === 'error' ? 'alert' : 'status'}>{report.message}</p>
+          <progress aria-label="Fields processed" max={report.rows.length || 1} value={report.stage === 'preparing' ? undefined : completed} />
+          <p class="meta">{report.rows.length ? `${completed} of ${report.rows.length} fields processed` : finished ? '0 fields processed' : 'Finding application fields…'}</p>
+          <ol class="progress-stages" aria-label="Fill stages">
+            {stages.map((label, index) => <li key={label} class={index === stageIndex ? 'active' : index < stageIndex ? 'done' : ''} aria-current={index === stageIndex ? 'step' : undefined}>{label}</li>)}
+          </ol>
+          <div class="progress-counts">
+            <div><strong>{filled.length}</strong><span>Filled</span></div>
+            <div><strong>{skipped.length}</strong><span>Skipped</span></div>
+            <div class={failed.length ? 'has-failures' : ''}><strong>{failed.length}</strong><span>Failed</span></div>
+          </div>
+        </section>
+        {([
+          ['Failed', failed], ['Skipped', skipped], ['Remaining', pending], ['Filled', filled],
+        ] as const).filter(([, rows]) => rows.length).map(([label, rows]) => (
+          <section class="progress-group" key={label} aria-label={label}>
+            <h3>{label} <span>{rows.length}</span></h3>
+            <div class="field-list">{rows.map((row) => (
+              <article class={`field-row ${row.status}`} key={row.field.uid}>
+                <div class="field-row-heading">
+                  <div class="field-label"><span>{row.field.label || row.field.name || 'Unnamed field'}</span>{row.field.required ? <small>Required</small> : null}</div>
+                  <StatusChip tone={row.status} label={row.status === 'writing' ? report.stage === 'generating' ? 'Writing' : 'Filling' : row.status === 'mapped' ? 'Ready' : label === 'Remaining' ? 'Waiting' : label} />
+                </div>
+                {row.failureReason ? <p class="progress-reason">{row.failureReason}</p> : row.value ? <p class="progress-answer">{row.value === '__resume__' ? 'Resume attached' : row.value}</p> : null}
+              </article>
+            ))}</div>
+          </section>
+        ))}
+      </main>
+      <footer class="progress-footer">{finished ? <button class="btn btn-primary" onClick={onBack}>Review fields</button> : <span>Keep this panel open while Carbon fills your form.</span>}</footer>
     </div>
   )
 }

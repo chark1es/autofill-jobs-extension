@@ -3,6 +3,7 @@ import type {
   ExpandRepeatersResult,
   FillRequest,
   FillResult,
+  FillFieldProgress,
   PageDiagnostics,
   Store,
 } from './types'
@@ -11,6 +12,7 @@ import injectedContentScript from '../content/recovery.ts?script&iife'
 export type Msg =
   | { type: 'DETECT' }
   | { type: 'FILL'; payload: FillRequest }
+  | { type: 'FILL_PROGRESS'; payload: FillFieldProgress }
   | { type: 'IMPORT_LINKEDIN' }
   | { type: 'EXPAND_REPEATERS'; payload: { experience: number; education: number } }
   | { type: 'COLLECT_PAGE_DIAGNOSTICS' }
@@ -23,6 +25,7 @@ export type Msg =
 export type MsgResult = {
   DETECT: DetectResult
   FILL: FillResult
+  FILL_PROGRESS: null
   IMPORT_LINKEDIN: Partial<Store>
   EXPAND_REPEATERS: ExpandRepeatersResult
   COLLECT_PAGE_DIAGNOSTICS: PageDiagnostics

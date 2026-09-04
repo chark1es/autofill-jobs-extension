@@ -213,6 +213,29 @@ body.options .app {
   background: var(--surface);
 }
 
+.progress-main { display: flex; flex-direction: column; gap: 20px; }
+.progress-summary h2 { margin: 0 0 4px; font-size: 23px; line-height: 1.2; letter-spacing: -.025em; }
+.progress-page { margin: 0 0 16px; color: var(--muted); overflow-wrap: anywhere; }
+.progress-message { min-height: 38px; margin: 0 0 10px; overflow-wrap: anywhere; }
+.progress-summary progress { display: block; width: 100%; height: 8px; border: 0; border-radius: 8px; overflow: hidden; accent-color: var(--sage); }
+.progress-summary progress::-webkit-progress-bar { background: var(--mint-soft); border-radius: 8px; }
+.progress-summary progress::-webkit-progress-value { background: var(--sage); border-radius: 8px; transition: width 180ms ease; }
+.progress-stages { list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 0; margin: 18px 0; color: var(--faint); font-size: 11px; }
+.progress-stages li { border-top: 2px solid var(--line); padding-top: 7px; }
+.progress-stages li.active { color: var(--ink); border-color: var(--sage); font-weight: 700; }
+.progress-stages li.done { color: var(--sage); border-color: var(--sage); }
+.progress-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.progress-counts > div { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
+.progress-counts strong { font-size: 24px; line-height: 1.1; }
+.progress-counts span { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.progress-counts .has-failures { background: var(--signal-soft); color: var(--signal); border-color: #e8c5ba; }
+.progress-group h3 { display: flex; justify-content: space-between; margin: 0 0 8px; font-size: 14px; }
+.progress-group h3 span { color: var(--muted); font-weight: 400; }
+.progress-reason, .progress-answer { margin: 7px 0 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; white-space: pre-wrap; }
+.failed .progress-reason { color: var(--signal); }
+.progress-footer { flex: 0 0 auto; padding: 12px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.progress-footer .btn { width: 100%; }
+
 .tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

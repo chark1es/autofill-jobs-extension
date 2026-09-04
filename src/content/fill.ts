@@ -1,4 +1,4 @@
-import type { FillPlanItem, FillResult } from '../lib/types'
+import type { FillFieldProgress, FillPlanItem, FillResult } from '../lib/types'
 import { elementByUid, fieldLabel } from './detect'
 
 function setNative(
@@ -321,14 +321,17 @@ async function attachFile(
 export async function fillFields(
   items: FillPlanItem[],
   resume?: { name: string; mime: string; dataBase64: string },
+  onProgress?: (progress: Omit<FillFieldProgress, 'runId'>) => void,
 ): Promise<FillResult> {
   const failed: FillResult['failed'] = []
   const filledUids: string[] = []
   let filled = 0
   for (const item of items) {
+    onProgress?.({ uid: item.uid, status: 'filling' })
     const el = elementByUid(item.uid)
     if (!el) {
       failed.push({ uid: item.uid, reason: 'Field left the page.' })
+      onProgress?.({ uid: item.uid, status: 'failed', reason: 'Field left the page.' })
       continue
     }
     try {
@@ -346,7 +349,10 @@ export async function fillFields(
         }
         continue
       }
-      if (!item.value) continue
+      if (!item.value) {
+        failed.push({ uid: item.uid, reason: 'No value was provided.' })
+        continue
+      }
       if (el instanceof HTMLSelectElement) {
         const ok = await pickSelect(el, item.value)
         if (ok) {
@@ -404,6 +410,9 @@ export async function fillFields(
         uid: item.uid,
         reason: err instanceof Error ? err.message : 'Fill failed.',
       })
+    } finally {
+      const failure = failed.find((entry) => entry.uid === item.uid)
+      onProgress?.({ uid: item.uid, status: failure ? 'failed' : 'filled', reason: failure?.reason })
     }
   }
   return { filled, filledUids, failed }

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><title>Carbon fill progress fixture</title></head>
+  <body class="popup">
+    <form id="source-form">
+      <label>First name<input name="firstName" autocomplete="given-name" /></label>
+      <label>Email<input name="email" type="email" value="taylor@example.com" /></label>
+      <label>Phone<input name="phone" type="tel" /></label>
+      <label>City<input name="city" autocomplete="address-level2" /></label>
+      <label>Why are you interested in this role?<textarea name="motivation"></textarea></label>
+      <label>Describe your relevant experience<textarea name="relevant-experience"></textarea></label>
+    </form>
+    <div id="root"></div>
+    <script type="module">
+      import '../src/ui/styles.css'
+      import '@fontsource/source-sans-3/400.css'
+      import '@fontsource/source-sans-3/600.css'
+      import '@fontsource/source-sans-3/700.css'
+      import { EMPTY_STORE } from '../src/lib/types.ts'
+      import { detectFields } from '../src/content/detect.ts'
+      import { fillFields } from '../src/content/fill.ts'
+      const detected = detectFields()
+      detected.title = 'Product designer · Northwind Labs'
+      document.querySelector('#source-form').style.display = 'none'
+      const scenario = new URLSearchParams(location.search).get('scenario') || 'mixed'
+      const store = structuredClone(EMPTY_STORE)
+      Object.assign(store.identity, { firstName: 'Taylor', lastName: 'Morgan', email: 'taylor@example.com', city: 'San Diego', summary: 'Designs accessible products.' })
+      Object.assign(store.settings, { enabled: true, openrouterKey: scenario === 'no-key' ? '' : 'fixture-key', openrouterModel: 'fixture-model' })
+      const listeners = new Set()
+      const realFetch = window.fetch.bind(window)
+      window.fetch = async (input, init) => {
+        if (!String(input).startsWith('https://openrouter.ai/')) return realFetch(input, init)
+        const request = JSON.parse(init.body)
+        document.body.dataset.aiRequest = init.body
+        const questions = JSON.parse(request.messages[1].content).questions
+        await new Promise((resolve) => setTimeout(resolve, 1800))
+        if (scenario === 'ai-error') return new Response('Unavailable', { status: 503 })
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ answers: questions.toReversed().map((question) => ({ id: question.id, answer: 'I design accessible products and would bring that experience to this role.' })) }) } }] }))
+      }
+      window.chrome = {
+        runtime: { id: 'fixture', onMessage: { addListener: (listener) => listeners.add(listener), removeListener: (listener) => listeners.delete(listener) } },
+        storage: {
+          local: { get: async () => ({ 'carbon.store.v1': store }), set: async () => {} },
+          onChanged: { addListener() {}, removeListener() {} },
+        },
+        tabs: {
+          query: async () => [{ id: 1, url: 'https://jobs.example.com/application', title: detected.title }],
+          sendMessage: async (_tabId, message) => {
+            if (message.type === 'DETECT') return scenario === 'empty' ? { ...detected, fields: [] } : detected
+            if (message.type === 'EXPAND_REPEATERS') {
+              await new Promise((resolve) => setTimeout(resolve, 300))
+              if (scenario === 'page-error') return { error: 'The application page disconnected.' }
+              return { experienceAdded: 0, educationAdded: 0 }
+            }
+            if (message.type === 'FILL') {
+              document.body.dataset.fillRequest = JSON.stringify(message.payload)
+              document.querySelector('[name="city"]')?.remove()
+              return fillFields(message.payload.items, message.payload.resume, (progress) => {
+                for (const listener of listeners) listener({ type: 'FILL_PROGRESS', payload: { ...progress, runId: message.payload.runId } }, { tab: { id: 1 } })
+              })
+            }
+          },
+        },
+      }
+      const { h, render } = await import('preact')
+      const { App } = await import('../src/ui/App.tsx')
+      render(h(App, { mode: 'popup' }), document.querySelector('#root'))
+    </script>
+  </body>
+</html>

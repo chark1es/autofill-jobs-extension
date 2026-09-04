@@ -1,4 +1,4 @@
-import { completeWithOpenRouter } from '../lib/openrouter'
+import { completeQuestionsWithOpenRouter, completeWithOpenRouter } from '../lib/openrouter'
 import { loadStore, saveStore } from '../lib/storage'
 import {
   findSavedAnswer,
@@ -23,25 +23,9 @@ async function tabMsg<T>(tabId: number, msg: Msg): Promise<T> {
 
 async function planFill(store: Store, detect: DetectResult): Promise<FillPlanItem[]> {
   const items: FillPlanItem[] = []
+  const questions = []
   for (const field of detect.fields) {
-    const saved = findSavedAnswer(field.label, store)
-    let value = saved || heuristicValue(field, store)
-    if (!value && needsAI(field, value) && store.settings.openrouterKey) {
-      try {
-        value = await completeWithOpenRouter({
-          key: store.settings.openrouterKey,
-          model: store.settings.openrouterModel,
-          question: field.label,
-          options: field.options,
-          store,
-          pageTitle: detect.title,
-        })
-        items.push({ uid: field.uid, value, source: 'ai', suggestionHints: suggestionHints(field, store) })
-        continue
-      } catch {
-        // leave empty; popup surfaces OpenRouter errors on explicit AI calls
-      }
-    }
+    const value = findSavedAnswer(field.label, store) || heuristicValue(field, store)
     if (value) {
       items.push({
         uid: field.uid,
@@ -49,7 +33,21 @@ async function planFill(store: Store, detect: DetectResult): Promise<FillPlanIte
         source: field.kind === 'file' ? 'resume-file' : 'heuristic',
         suggestionHints: suggestionHints(field, store),
       })
+    } else if (!field.currentValue && needsAI(field, value) && store.settings.openrouterKey && store.settings.openrouterModel.trim()) {
+      questions.push({ uid: field.uid, question: field.label, options: field.options })
     }
+  }
+  const answers = await completeQuestionsWithOpenRouter({
+    key: store.settings.openrouterKey,
+    model: store.settings.openrouterModel,
+    questions,
+    store,
+    pageTitle: detect.title,
+  })
+  for (const answer of answers) {
+    if (!answer.value) continue
+    const field = detect.fields.find((candidate) => candidate.uid === answer.uid)!
+    items.push({ uid: answer.uid, value: answer.value, source: 'ai', suggestionHints: suggestionHints(field, store) })
   }
   return items
 }
