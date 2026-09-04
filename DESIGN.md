@@ -2,21 +2,22 @@
 name: Carbon
 description: Local-first candidate file that fills job applications.
 colors:
-  ink: "#111111"
-  muted: "#5c5c5c"
-  bg: "#ffffff"
-  line: "#e8e8e6"
-  fill: "#2f6fed"
-  fill-hover: "#1f5fd6"
+  ink: "#18201d"
+  muted: "#68716d"
+  bg: "#f7f8f5"
+  surface: "#ffffff"
+  line: "#dfe4df"
+  fill: "#537568"
+  fill-hover: "#405f54"
   fill-ink: "#ffffff"
-  mapped: "#1f7a4d"
-  mapped-bg: "#edf3ec"
-  ai: "#8a5a00"
-  ai-bg: "#fbf3db"
-  empty-bg: "#f4f4f5"
-  danger: "#b42318"
-  danger-bg: "#fdebec"
-  disabled: "#e8e8e6"
+  mapped: "#405f54"
+  mapped-bg: "#dcebe4"
+  ai: "#8a691f"
+  ai-bg: "#f8f1d9"
+  empty-bg: "#eef0ee"
+  danger: "#b95c46"
+  danger-bg: "#faeee9"
+  disabled: "#e5e8e5"
 typography:
   ui:
     fontFamily: "Source Sans 3, Segoe UI, sans-serif"
@@ -44,6 +45,7 @@ typography:
     letterSpacing: "0.04em"
 rounded:
   control: "6px"
+  container: "9px"
   chip: "999px"
 spacing:
   sm: "8px"
@@ -71,39 +73,40 @@ components:
 
 ## Overview
 
-Carbon is an ATS recruiter console in a persistent browser side panel, with a compact popup for quick access. It is a candidate file, not a chat overlay. White ground, charcoal ink, one utility blue for Fill, dense rows, status chips. Source Sans 3 is the only face. The popup is 400×600; the options tab is the same file at 760px.
+Carbon is a quiet application desk in a persistent browser side panel, with a compact popup for quick access. It is a candidate file, not a chat overlay. Paper and white surfaces, deep green ink, one sage action color, readable rows, and restrained status chips. Source Sans 3 is the only face. The popup is 400×600; the options tab uses the same system at up to 840px.
 
 ## Colors
 
-Restrained. Ink and hairline do the structure. `#2F6FED` is Fill and focus only. Mapped green and AI amber live on chips, never as page color. Disabled Fill is gray `#E8E8E6`, not a faded blue.
+Restrained and workmanlike. Ink and hairlines carry the structure. Sage `#537568` is reserved for the primary Fill action, focus, and readiness. AI amber and failure terracotta appear only where their meaning is needed.
 
 ## Typography
 
-One family, tight product scale. Title 16/650/−0.02em. Body 13. Meta 12 muted. Chips 10/700/uppercase/0.04em tracking. Tabular nums on status. No display serif, no Inter.
+One family, tight product scale. Title 16/700/−0.025em. Body 13. Meta 11 muted. Chips 10/650 in sentence case. Tabular nums on status. No display serif, no Inter.
 
 ## Layout
 
-Header rail (title, on/off switch, and Fill) → scrollable main → five equal bottom tabs. Fill tab: identity strip then a three-column table of every detected page input (Field / Value / Status). Profile is a two-column form grid. Jobs are stacked records with a hairline, not cards-in-cards. Options page is the same chrome centered at 760px with side rules.
+Compact brand/status rail → scrollable workspace → five equal bottom tabs. Fill shows one candidate summary followed by vertically stacked field rows that remain legible at side-panel widths. Profile is grouped into collapsible contact, location, work, voluntary, and skills sections. Jobs stay as compact disclosure rows. Options uses the same chrome centered at 840px.
 
 ## Elevation & Depth
 
-None. Hairline `#E8E8E6` is the only separator. No shadows.
+Nearly none. Hairlines and surface color changes establish hierarchy; only the switch thumb uses a tiny functional shadow. No floating cards.
 
 ## Shapes
 
-Controls 6px. Status chips full pill. No large rounded shells.
+Controls use 6px corners, grouped sections use 9px, and status chips are full pills. Rounded shapes distinguish interactive groups rather than decorate every surface.
 
 ## Components
 
 - **Fill** sits in the header on every tab. Disabled until fields exist.
-- **Tabs** recede in muted ink; current tab is ink with a 2px bottom rule.
+- **Tabs** recede in muted ink; the current tab uses sage with a short 2px rule.
 - **Status chips:** mapped (green), needs AI (amber), empty (gray), writing (blue wash), failed (red).
-- **Inputs:** 1px hairline, 6px radius, ink caret, `#2F6FED` focus ring.
+- **Inputs:** 1px hairline, 6px radius, ink caret, sage focus ring.
 - **Empty states** teach the next action. No illustration.
 
 ## Do's and Don'ts
 
-- Do keep Fill as the only saturated imperative.
+- Do keep sage Fill as the only saturated imperative.
+- Do group long forms by the way applicants think about their information.
 - Do treat the popup as a candidate record, not a chatbot.
 - Don't add sparkle, gradients, glass, or a second accent.
 - Don't export the OpenRouter key — that's product, not paint, but it binds every settings treatment.

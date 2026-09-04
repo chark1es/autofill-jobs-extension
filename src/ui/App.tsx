@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'preact/hooks'
+import type { ComponentChildren } from 'preact'
 import type { DetectedField, DetectResult, Experience, Education, MatchStatus, Store } from '../lib/types'
 import { EMPTY_IDENTITY, EMPTY_STORE } from '../lib/types'
 import { fromExportBundle, loadStore, saveStore, subscribeStore, toExportBundle, uid } from '../lib/storage'
@@ -153,7 +154,6 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
   const mapped = rows.filter((r) => r.status === 'mapped' || r.value).length
   const aiCount = rows.filter((r) => r.status === 'needs-ai').length
   const displayName = [store.identity.firstName, store.identity.lastName].filter(Boolean).join(' ')
-
   function updateRowValue(uid: string, value: string) {
     setRows((current) => current.map((row) => {
       if (row.field.uid !== uid) return row
@@ -396,8 +396,8 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
   return (
     <div class="app">
       <header class="header">
-        <div>
-          <h1>Candidate file</h1>
+        <div class="header-copy">
+          <h1>Carbon</h1>
           <p class="meta status">
             {!store.settings.enabled
               ? 'Carbon is off'
@@ -406,7 +406,7 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
               : detect
                 ? `${mapped} mapped · ${aiCount} need AI · ${detect.host.replace(/^www\./, '')}`
                 : mode === 'options'
-                  ? 'Full editor'
+                  ? 'Saved locally'
                   : 'Open an application form'}
           </p>
         </div>
@@ -414,6 +414,7 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
           <label class="enable-switch" title={store.settings.enabled ? 'Disable Carbon' : 'Enable Carbon'}>
             <input
               type="checkbox"
+              aria-label={store.settings.enabled ? 'Disable Carbon' : 'Enable Carbon'}
               checked={store.settings.enabled}
               onChange={(event) => void persist({
                 ...store,
@@ -421,7 +422,6 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
               })}
             />
             <span aria-hidden="true" />
-            <b>{store.settings.enabled ? 'On' : 'Off'}</b>
           </label>
           <button class="btn btn-primary" disabled={!store.settings.enabled || !!busy || rows.length === 0} onClick={() => void fillNow()}>
             <Icon name="fill" />
@@ -429,9 +429,9 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
           </button>
         </div>
       </header>
-      <div class="main">
-        {error ? <div class="banner error">{error}</div> : null}
-        {notice ? <div class="banner ok">{notice}</div> : null}
+      <main class={`main ${tab}-main`}>
+        {error ? <div class="banner error" role="alert"><Icon name="alert" /> <span>{error}</span></div> : null}
+        {notice ? <div class="banner ok" role="status"><Icon name="check" /> <span>{notice}</span></div> : null}
         {tab === 'fill' ? (
           <FillTab
             store={store}
@@ -458,8 +458,8 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
         {tab === 'settings' ? (
           <SettingsTab store={store} persist={persist} setError={setError} setNotice={setNotice} onLinkedIn={() => void importLinkedIn()} />
         ) : null}
-      </div>
-      <nav class="tabs">
+      </main>
+      <nav class="tabs" aria-label="Carbon sections">
         {(
           [
             ['fill', 'Fill', 'fill'],
@@ -545,20 +545,21 @@ function FillTab({
     <>
       {unknownCount ? (
         <div class="banner support-banner">
-          <p>Carbon could not recognize {unknownCount} field{unknownCount === 1 ? '' : 's'} on this page.</p>
+          <p>{unknownCount} field{unknownCount === 1 ? '' : 's'} need a closer look.</p>
           <DiagnosticsButton onClick={onDiagnostics} />
         </div>
       ) : null}
-      <div class="strip">
-        <span><strong>{displayName || 'Unnamed'}</strong></span>
-        {store.identity.email ? <span>{store.identity.email}</span> : null}
-        {store.identity.phone ? <span>{store.identity.phone}</span> : null}
-        {store.identity.city ? <span>{store.identity.city}</span> : null}
+      <div class="identity-summary">
+        <span class="identity-avatar" aria-hidden="true">{(displayName || store.identity.email || '?').slice(0, 1).toUpperCase()}</span>
+        <div>
+          <strong>{displayName || 'Unnamed candidate'}</strong>
+          <span>{[store.identity.email, store.identity.city].filter(Boolean).join(' · ') || 'Complete your profile before filling'}</span>
+        </div>
       </div>
       <section class="fill-section">
         <div class="section-heading">
-          <h2>Detected inputs</h2>
-          <span>{rows.length} found{filledCount ? `, ${filledCount} filled` : ''}{failedCount ? `, ${failedCount} not filled` : ''}</span>
+          <h2>Application fields</h2>
+          <span>{filledCount}/{rows.length} filled{failedCount ? ` · ${failedCount} failed` : ''}</span>
         </div>
         <FieldTable
           rows={rows}
@@ -603,15 +604,7 @@ function FieldTable({
   onValueChange: (uid: string, value: string) => void
 }) {
   return (
-    <table class="table compact-table">
-      <thead>
-        <tr>
-          <th>Field</th>
-          <th>Value</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
+    <div class="field-list">
         {rows.map((row) => {
           const openEnded = isOpenEndedField(row.field)
           const canGenerate = openEnded || row.status === 'needs-ai' || row.source === 'ai'
@@ -625,12 +618,15 @@ function FieldTable({
             failed: 'Not filled',
           }
           return (
-            <tr key={row.field.uid} class={`${row.status} ${openEnded ? 'open-ended' : ''}`}>
-              <td class="field-label">
-                {row.field.label}
-                {row.field.required ? <small>Required</small> : null}
-              </td>
-              <td class="field-value">
+            <article key={row.field.uid} class={`field-row ${row.status} ${openEnded ? 'open-ended' : ''}`}>
+              <div class="field-row-heading">
+                <div class="field-label">
+                  <span>{row.field.label}</span>
+                  {row.field.required ? <small>Required</small> : null}
+                </div>
+                <StatusChip tone={row.status} label={statusLabel[row.status]} />
+              </div>
+              <div class="field-value">
                 <div class={canGenerate ? 'ai-answer' : undefined}>
                   {openEnded && row.value ? (
                     <textarea
@@ -656,15 +652,11 @@ function FieldTable({
                   ) : null}
                   {row.failureReason ? <small class="failure-reason">{row.failureReason}</small> : null}
                 </div>
-              </td>
-              <td class="status-cell">
-                <StatusChip tone={row.status} label={statusLabel[row.status]} />
-              </td>
-            </tr>
+              </div>
+            </article>
           )
         })}
-      </tbody>
-    </table>
+    </div>
   )
 }
 
@@ -780,8 +772,8 @@ function ProfileTab({
   const set = (k: keyof Store['identity'], v: string) => onChange({ ...id, [k]: v })
   const [skillDraft, setSkillDraft] = useState('')
   return (
-    <>
-      <div class="form-grid">
+    <div class="section-stack">
+      <FormSection title="Contact" description="The details used on most applications." open>
         <Field label="First name" value={id.firstName} onInput={(v) => set('firstName', v)} />
         <Field label="Middle name" value={id.middleName} onInput={(v) => set('middleName', v)} />
         <Field label="Last name" value={id.lastName} onInput={(v) => set('lastName', v)} />
@@ -791,6 +783,9 @@ function ProfileTab({
         <Field label="Email" value={id.email} type="email" onInput={(v) => set('email', v)} />
         <Field label="Phone" value={id.phone} type="tel" onInput={(v) => set('phone', v)} />
         <Field label="Alternate phone" value={id.phoneAlt} type="tel" span onInput={(v) => set('phoneAlt', v)} />
+      </FormSection>
+
+      <FormSection title="Location and links" description="Address and public profiles.">
         <Field label="Address line 1" value={id.address1} span onInput={(v) => set('address1', v)} />
         <Field label="Address line 2" value={id.address2} span onInput={(v) => set('address2', v)} />
         <Field label="City" value={id.city} onInput={(v) => set('city', v)} />
@@ -800,82 +795,104 @@ function ProfileTab({
         <Field label="LinkedIn" value={id.linkedin} type="url" span onInput={(v) => set('linkedin', v)} />
         <Field label="GitHub" value={id.github} type="url" onInput={(v) => set('github', v)} />
         <Field label="Portfolio" value={id.portfolio} type="url" onInput={(v) => set('portfolio', v)} />
-        <Field label="Website" value={id.website} type="url" onInput={(v) => set('website', v)} />
+        <Field label="Website" value={id.website} type="url" span onInput={(v) => set('website', v)} />
+      </FormSection>
+
+      <FormSection title="Work preferences" description="Targets, availability, and work authorization.">
         <Field label="Desired job title" value={id.desiredJobTitle} onInput={(v) => set('desiredJobTitle', v)} />
         <Field label="Years of experience" value={id.yearsExperience} onInput={(v) => set('yearsExperience', v)} />
         <Field label="Headline" value={id.headline} span onInput={(v) => set('headline', v)} />
         <Field label="Summary" value={id.summary} type="textarea" span onInput={(v) => set('summary', v)} />
-        <label class="field">
-          <span>Work authorized</span>
-          <select value={id.workAuthorized} onChange={(e) => set('workAuthorized', (e.target as HTMLSelectElement).value)}>
-            <option value="">Select</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Needs sponsorship</span>
-          <select value={id.needsSponsorship} onChange={(e) => set('needsSponsorship', (e.target as HTMLSelectElement).value)}>
-            <option value="">Select</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Willing to relocate</span>
-          <select value={id.willingToRelocate} onChange={(e) => set('willingToRelocate', (e.target as HTMLSelectElement).value)}>
-            <option value="">Select</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Willing to travel</span>
-          <select value={id.willingToTravel} onChange={(e) => set('willingToTravel', (e.target as HTMLSelectElement).value)}>
-            <option value="">Select</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </label>
+        <YesNoField label="Work authorized" value={id.workAuthorized} onChange={(v) => set('workAuthorized', v)} />
+        <YesNoField label="Needs sponsorship" value={id.needsSponsorship} onChange={(v) => set('needsSponsorship', v)} />
+        <YesNoField label="Willing to relocate" value={id.willingToRelocate} onChange={(v) => set('willingToRelocate', v)} />
+        <YesNoField label="Willing to travel" value={id.willingToTravel} onChange={(v) => set('willingToTravel', v)} />
         <SelectField label="Citizenship" value={id.citizenship} options={CITIZENSHIP_OPTIONS} onChange={(v) => set('citizenship', v)} />
         <SelectField label="Visa status" value={id.visaStatus} options={VISA_OPTIONS} onChange={(v) => set('visaStatus', v)} />
         <SelectField label="Employment type" value={id.employmentType} options={EMPLOYMENT_OPTIONS} onChange={(v) => set('employmentType', v)} />
         <SelectField label="Work setting" value={id.remotePreference} options={WORK_SETTING_OPTIONS} onChange={(v) => set('remotePreference', v)} />
         <Field label="Salary expectation" value={id.salaryExpectation} onInput={(v) => set('salaryExpectation', v)} />
         <Field label="Notice / start" value={id.noticePeriod} onInput={(v) => set('noticePeriod', v)} />
+      </FormSection>
+
+      <FormSection title="Voluntary information" description="Optional demographic responses.">
         <SelectField label="Gender" value={id.gender} options={GENDER_OPTIONS} onChange={(v) => set('gender', v)} />
         <SelectField label="Race / ethnicity" value={id.ethnicity} options={ETHNICITY_OPTIONS} onChange={(v) => set('ethnicity', v)} />
         <SelectField label="Veteran status" value={id.veteranStatus} options={VETERAN_OPTIONS} onChange={(v) => set('veteranStatus', v)} />
         <SelectField label="Disability status" value={id.disabilityStatus} options={DISABILITY_OPTIONS} onChange={(v) => set('disabilityStatus', v)} />
-      </div>
-      <div class="toolbar" />
-      <label class="field span-2">
-        <span>Skills</span>
-        <div class="skills">
+      </FormSection>
+
+      <FormSection title="Skills" description={`${store.skills.length} saved`}>
+        <label class="field span-2">
+          <span>Add a skill</span>
+          <input
+            placeholder="Type a skill and press Enter"
+            value={skillDraft}
+            onInput={(e) => setSkillDraft((e.target as HTMLInputElement).value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              const v = skillDraft.trim()
+              if (!v) return
+              onSkills([...store.skills, v])
+              setSkillDraft('')
+            }}
+          />
+        </label>
+        <div class="skills span-2">
           {store.skills.map((s) => (
             <span class="tag" key={s}>
               {s}
-              <button type="button" onClick={() => onSkills(store.skills.filter((x) => x !== s))}>
-                ×
-              </button>
+              <button type="button" aria-label={`Remove ${s}`} onClick={() => onSkills(store.skills.filter((x) => x !== s))}>×</button>
             </span>
           ))}
+          {!store.skills.length ? <span class="meta">No skills saved yet.</span> : null}
         </div>
-        <input
-          placeholder="Add a skill and press Enter"
-          value={skillDraft}
-          onInput={(e) => setSkillDraft((e.target as HTMLInputElement).value)}
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter') return
-            e.preventDefault()
-            const v = skillDraft.trim()
-            if (!v) return
-            onSkills([...store.skills, v])
-            setSkillDraft('')
-          }}
-        />
-      </label>
-    </>
+      </FormSection>
+    </div>
+  )
+}
+
+function FormSection({
+  title,
+  description,
+  open = false,
+  children,
+}: {
+  title: string
+  description: string
+  open?: boolean
+  children: ComponentChildren
+}) {
+  const [expanded, setExpanded] = useState(open)
+  return (
+    <details
+      class="form-section"
+      open={expanded}
+      onToggle={(event) => setExpanded((event.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary>
+        <span>
+          <strong>{title}</strong>
+          <small>{description}</small>
+        </span>
+        <span class="section-chevron"><Icon name="chevron" /></span>
+      </summary>
+      <div class="form-grid form-section-body">{children}</div>
+    </details>
+  )
+}
+
+function YesNoField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label class="field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange((event.target as HTMLSelectElement).value)}>
+        <option value="">Select</option>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+    </label>
   )
 }
 
@@ -916,9 +933,15 @@ function ExperienceTab({
   }
   return (
     <>
-      <div class="toolbar">
-        <button class="btn" onClick={addExp}><Icon name="plus" /> Role</button>
-        <button class="btn" onClick={addEdu}><Icon name="plus" /> School</button>
+      <div class="section-heading action-heading">
+        <div>
+          <h2>Roles and education</h2>
+          <span>{store.experience.length + store.education.length} saved</span>
+        </div>
+        <div class="toolbar">
+          <button class="btn" onClick={addExp}><Icon name="plus" /> Role</button>
+          <button class="btn" onClick={addEdu}><Icon name="plus" /> School</button>
+        </div>
       </div>
       {store.experience.length === 0 && store.education.length === 0 ? (
         <div class="empty">
@@ -1039,8 +1062,12 @@ function EduForm({ edu, onChange }: { edu: Education; onChange: (j: Education) =
 
 function Answers({ store, persist }: { store: Store; persist: (s: Store) => Promise<void> }) {
   return (
-    <>
-      <div class="toolbar">
+    <section class="answers-section">
+      <div class="section-heading action-heading">
+        <div>
+          <h2>Saved answers</h2>
+          <span>Reuse answers to common questions</span>
+        </div>
         <button
           class="btn"
           onClick={() =>
@@ -1088,7 +1115,7 @@ function Answers({ store, persist }: { store: Store; persist: (s: Store) => Prom
           </div>
         </article>
       ))}
-    </>
+    </section>
   )
 }
 
@@ -1239,152 +1266,144 @@ function SettingsTab({
   }
   return (
     <>
-      <div class="form-grid">
-        <label class="field span-2">
-          <span>OpenRouter key</span>
-          <input
-            type="password"
-            value={s.openrouterKey}
-            autocomplete="off"
-            placeholder="sk-or-…"
-            onInput={(e) =>
-              void persist({
-                ...store,
-                settings: { ...s, openrouterKey: (e.target as HTMLInputElement).value.trim() },
-              })
-            }
-          />
-        </label>
-        <label class="field span-2">
-          <span>Model</span>
-          <select
-            value={custom ? CUSTOM_MODEL : s.openrouterModel}
-            onChange={(e) => {
-              const v = (e.target as HTMLSelectElement).value
-              void persist({
-                ...store,
-                settings: {
-                  ...s,
-                  openrouterModel: v === CUSTOM_MODEL ? (custom ? s.openrouterModel : '') : v,
-                },
-              })
-            }}
-          >
-            {OPENROUTER_MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-                {prices[m] ? ` · ${formatUsdShort(prices[m]!)}` : ''}
-              </option>
-            ))}
-            <option value={CUSTOM_MODEL}>Custom</option>
-          </select>
-        </label>
-        {custom ? (
+      <section class="settings-section">
+        <div class="section-heading">
+          <h2>AI answers</h2>
+        </div>
+        <div class="form-grid">
           <label class="field span-2">
-            <span>OpenRouter slug</span>
+            <span>OpenRouter key</span>
             <input
-              type="text"
-              value={s.openrouterModel}
-              placeholder="provider/model-id"
-              spellcheck={false}
+              type="password"
+              value={s.openrouterKey}
+              autocomplete="off"
+              placeholder="sk-or-…"
               onInput={(e) =>
                 void persist({
                   ...store,
-                  settings: { ...s, openrouterModel: (e.target as HTMLInputElement).value.trim() },
+                  settings: { ...s, openrouterKey: (e.target as HTMLInputElement).value.trim() },
                 })
               }
             />
           </label>
-        ) : null}
-        <p class="price">
-          {priceStatus === 'loading'
-            ? 'Fetching price…'
-            : activePrice
-              ? formatModelCost(activePrice)
-              : s.openrouterModel.trim()
-                ? priceStatus === 'missing'
-                  ? 'No OpenRouter price for this slug.'
-                  : ''
-                : 'Enter a model slug to see price.'}
-        </p>
-        <p class="meta span-2">When Fill finds a question that needs a written answer, Carbon generates it automatically and puts it on the page.</p>
-      </div>
-      <div class="toolbar">
-        <button class="btn" onClick={onLinkedIn}><Icon name="linkedin" /> Import LinkedIn tab</button>
-        <button class="btn" onClick={exportFile}><Icon name="download" /> Export</button>
-        <label class="btn">
-          Import
-          <input
-            type="file"
-            accept="application/json"
-            hidden
-            onChange={(e) => {
-              const f = (e.target as HTMLInputElement).files?.[0]
-              if (f) void importFile(f)
-            }}
-          />
-        </label>
-        <button
-          class="btn"
-          onClick={() =>
-            void persist({
-              ...store,
-              identity: {
-                ...EMPTY_IDENTITY,
-                firstName: 'Mira',
-                lastName: 'Chen',
-                email: 'mira@chen.dev',
-                phone: '+1 415 555 0142',
-                city: 'San Francisco',
-                state: 'CA',
-                country: 'United States',
-                linkedin: 'https://linkedin.com/in/mirachen',
-                github: 'https://github.com/mirachen',
-                headline: 'Staff engineer',
-                summary: 'Synthetic preview profile. Replace with your dossier.',
-                workAuthorized: 'yes',
-                needsSponsorship: 'no',
-              },
-              experience: [
-                {
-                  id: uid('exp'),
-                  company: 'Northwind Labs',
-                  title: 'Staff engineer',
-                  location: 'San Francisco, CA',
-                  startDate: 'Jan 2023',
-                  endDate: '',
-                  current: true,
-                  description: 'Led the application platform. Synthetic.',
+          <label class="field span-2">
+            <span>Model</span>
+            <select
+              value={custom ? CUSTOM_MODEL : s.openrouterModel}
+              onChange={(e) => {
+                const v = (e.target as HTMLSelectElement).value
+                void persist({
+                  ...store,
+                  settings: {
+                    ...s,
+                    openrouterModel: v === CUSTOM_MODEL ? (custom ? s.openrouterModel : '') : v,
+                  },
+                })
+              }}
+            >
+              {OPENROUTER_MODELS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                  {prices[m] ? ` · ${formatUsdShort(prices[m]!)}` : ''}
+                </option>
+              ))}
+              <option value={CUSTOM_MODEL}>Custom</option>
+            </select>
+          </label>
+          {custom ? (
+            <label class="field span-2">
+              <span>OpenRouter slug</span>
+              <input
+                type="text"
+                value={s.openrouterModel}
+                placeholder="provider/model-id"
+                spellcheck={false}
+                onInput={(e) =>
+                  void persist({
+                    ...store,
+                    settings: { ...s, openrouterModel: (e.target as HTMLInputElement).value.trim() },
+                  })
+                }
+              />
+            </label>
+          ) : null}
+          <p class="price">
+            {priceStatus === 'loading'
+              ? 'Fetching price…'
+              : activePrice
+                ? formatModelCost(activePrice)
+                : s.openrouterModel.trim()
+                  ? priceStatus === 'missing'
+                    ? 'No OpenRouter price for this slug.'
+                    : ''
+                  : 'Enter a model slug to see price.'}
+          </p>
+          <p class="meta span-2">Carbon only uses AI when a question needs a written answer.</p>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <div class="section-heading">
+          <h2>Candidate file</h2>
+          <span>Stored on this device</span>
+        </div>
+        <div class="toolbar">
+          <button class="btn" onClick={onLinkedIn}><Icon name="linkedin" /> Import LinkedIn</button>
+          <button class="btn" onClick={exportFile}><Icon name="download" /> Export</button>
+          <label class="btn">
+            Import file
+            <input
+              type="file"
+              accept="application/json"
+              hidden
+              onChange={(e) => {
+                const f = (e.target as HTMLInputElement).files?.[0]
+                if (f) void importFile(f)
+              }}
+            />
+          </label>
+          <button
+            class="btn"
+            onClick={() =>
+              void persist({
+                ...store,
+                identity: {
+                  ...EMPTY_IDENTITY,
+                  firstName: 'Mira',
+                  lastName: 'Chen',
+                  email: 'mira@chen.dev',
+                  phone: '+1 415 555 0142',
+                  city: 'San Francisco',
+                  state: 'CA',
+                  country: 'United States',
+                  linkedin: 'https://linkedin.com/in/mirachen',
+                  github: 'https://github.com/mirachen',
+                  headline: 'Staff engineer',
+                  summary: 'Synthetic preview profile. Replace with your dossier.',
+                  workAuthorized: 'yes',
+                  needsSponsorship: 'no',
                 },
-              ],
-              education: [
-                {
-                  id: uid('edu'),
-                  school: 'UC San Diego',
-                  degree: 'B.S.',
-                  field: 'Computer Science',
-                  location: 'La Jolla, CA',
-                  startDate: '2015',
-                  endDate: '2019',
-                  gpa: '',
-                },
-              ],
-              skills: ['TypeScript', 'Distributed systems'],
-            })
-          }
-        >
-          Load sample
-        </button>
-        <button
-          class="btn btn-danger"
-          onClick={() => void persist({ ...EMPTY_STORE, settings: store.settings })}
-        >
-          Clear file
-        </button>
-      </div>
-      <p class="meta" style={{ color: 'var(--muted)' }}>
-        Everything lives in chrome.storage.local. Exports never contain the OpenRouter key. Shortcut: ⌘⇧F / Ctrl+Shift+F.
-      </p>
+                experience: [{
+                  id: uid('exp'), company: 'Northwind Labs', title: 'Staff engineer', location: 'San Francisco, CA',
+                  startDate: 'Jan 2023', endDate: '', current: true, description: 'Led the application platform. Synthetic.',
+                }],
+                education: [{
+                  id: uid('edu'), school: 'UC San Diego', degree: 'B.S.', field: 'Computer Science', location: 'La Jolla, CA',
+                  startDate: '2015', endDate: '2019', gpa: '',
+                }],
+                skills: ['TypeScript', 'Distributed systems'],
+              })
+            }
+          >
+            Load sample
+          </button>
+        </div>
+        <div class="danger-row">
+          <p>Exports never include your OpenRouter key.</p>
+          <button class="btn btn-danger" onClick={() => void persist({ ...EMPTY_STORE, settings: store.settings })}>Clear file</button>
+        </div>
+      </section>
+      <p class="meta shortcut-note">Fill shortcut: ⌘⇧F / Ctrl+Shift+F</p>
     </>
   )
 }
