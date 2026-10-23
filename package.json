@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.23.4",
+    "bun": ">=1.4.4"
+  },
   "scripts": {
     "test": "bun test",
     "dev": "vite",
@@ -10,16 +14,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fontsource/source-sans-3": "^5.2.8",
-    "mammoth": "^1.9.0",
-    "pdfjs-dist": "^4.10.38",
-    "preact": "^10.25.4"
+    "@fontsource/source-sans-3": "^5.3.1",
+    "mammoth": "^1.13.0",
+    "pdfjs-dist": "^6.4.299",
+    "preact": "^11.0.2"
   },
   "devDependencies": {
-    "@crxjs/vite-plugin": "^2.0.3",
-    "@preact/preset-vite": "^2.9.4",
-    "@types/chrome": "^0.0.287",
-    "typescript": "^5.7.3",
-    "vite": "^6.0.7"
+    "@crxjs/vite-plugin": "^3.0.0",
+    "@preact/preset-vite": "^2.10.6",
+    "@types/chrome": "^0.3.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
   }
 }
