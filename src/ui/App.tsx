@@ -143,7 +143,7 @@ export function App({ mode }: { mode: 'popup' | 'options' | 'sidepanel' }) {
   useEffect(() => {
     if (mode !== 'sidepanel' || typeof chrome === 'undefined' || !chrome.tabs) return
     const refresh = () => void refreshDetect()
-    const updated = (_tabId: number, change: chrome.tabs.TabChangeInfo, changedTab: chrome.tabs.Tab) => {
+    const updated = (_tabId: number, change: chrome.tabs.OnUpdatedInfo, changedTab: chrome.tabs.Tab) => {
       if (changedTab.active && (change.url || change.status === 'complete')) refresh()
     }
     chrome.tabs.onActivated.addListener(refresh)
@@ -753,7 +753,7 @@ function Field({
   value: string
   onInput: (v: string) => void
   span?: boolean
-  type?: string
+  type?: 'text' | 'textarea' | 'email' | 'tel' | 'url'
 }) {
   return (
     <label class={`field ${span ? 'span-2' : ''}`}>
@@ -761,7 +761,13 @@ function Field({
       {type === 'textarea' ? (
         <textarea value={value} onInput={(e) => onInput((e.target as HTMLTextAreaElement).value)} />
       ) : (
-        <input type={type} value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)} />
+        // Preact 11 types <input type> as a discriminated union of literals keyed
+        // by ARIA role, so a runtime-selected type has to be asserted.
+        <input
+          type={type as 'text'}
+          value={value}
+          onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+        />
       )}
     </label>
   )
